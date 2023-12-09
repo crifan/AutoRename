@@ -1,31 +1,31 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20231208
+# Update: 20231209
 
 import re
 import json
 import idc
 import idaapi
-# import idautils
+import idautils
 # from idaapi import PluginForm
 # import ida_nalt
 # import ida_segment
 
 ################################################################################
-# Config & Settings
+# Config & Settings & Const
 ################################################################################
 
 # isVerbose = False
 isVerbose = True
 
+SINGLE_INSTRUCTION_SIZE = 4 # bytes
+# for rename, the max number of instruction to support
+# MAX_INSTRUCTION_NUM = 6
+MAX_INSTRUCTION_NUM = 8
+MAX_INSTRUCTION_SIZE = MAX_INSTRUCTION_NUM * SINGLE_INSTRUCTION_SIZE
+
 subDelimiter = "-"*30
 mainDelimiter = "="*40
-
-################################################################################
-# Const
-################################################################################
-
-SINGLE_INSTRUCTION_SIZE = 4 # bytes
 
 ################################################################################
 # Util Function
@@ -67,7 +67,20 @@ def ida_getDissamLine(funcAddr):
   # method 2: GetDisasm
   disasmLine = idc.GetDisasm(funcAddr)
   # print("disasmLine: type=%s, val=%s" % (type(disasmLine), disasmLine))
+
+  # post process
+  # print("disasmLine=%s" % disasmLine)
+  # "MOV             X4, X21" -> "MOV X4, X21"
+  disasmLine = re.sub("\s+", " ", disasmLine)
+  # print("disasmLine=%s" % disasmLine)
   return disasmLine
+
+def ida_getFunctionAddrList():
+  functionIterator = idautils.Functions()
+  functionAddrList = []
+  for curFuncAddr in functionIterator:
+    functionAddrList.append(curFuncAddr)
+  return functionAddrList
 
 class Operand:
   # Operand Type
@@ -208,22 +221,16 @@ class Operand:
 class Instruction:
   def __init__(self, addr, name, operands):
     self.addr = addr
+    self.disAsmStr = ida_getDissamLine(addr)
+    # print("self.disAsmStr=%s" % self.disAsmStr)
     self.name = name
     self.operands = operands
   
   def __str__(self):
-    # operandsStrList = []
-    # for curOperand in self.operands:
-    #   curOperandStr = "%s" % curOperand
-    #   # print("curOperandStr=%s" % curOperandStr)
-    #   operandsStrList.append(curOperandStr)
-    # operandsStrList = [str(eachOperand) for eachOperand in self.operands]
-    # operandsAllStr = ", ".join(operandsStrList)
-    # operandsAllStr = "[%s]" % operandsAllStr
-    operandsAllStr = Operand.listToStr(self.operands)
+    # operandsAllStr = Operand.listToStr(self.operands)
     # print("operandsAllStr=%s" % operandsAllStr)
-    # curInstStr = "<Instruction: addr=0x%X,name=%s,operands=%s>" % (self.addr, self.name, self.operands)
-    curInstStr = "<Instruction: addr=0x%X,name=%s,operands=%s>" % (self.addr, self.name, operandsAllStr)
+    # curInstStr = "<Instruction: addr=0x%X,name=%s,operands=%s>" % (self.addr, self.name, operandsAllStr)
+    curInstStr = "<Instruction: addr=0x%X,disAsmStr=%s>" % (self.addr, self.disAsmStr)
     # print("curInstStr=%s" % curInstStr)
     return curInstStr
 
@@ -342,6 +349,20 @@ def checkAllMovThenRet(instructionList):
   # print("isAllMovThenRet=%s" % isAllMovThenRet)
   return isAllMovThenRet
 
+def isNeedProcessFunc(curFuncAddr):
+  isNeedProcess = False
+  curFuncName  = ida_getFunctionName(curFuncAddr)
+  # print("curFuncName=%s" % curFuncName)
+  isDefaultSubFunc = re.match("^sub_[0-9A-Za-z]+$", curFuncName)
+  # print("isDefaultSubFunc=%s" % isDefaultSubFunc)
+  if isDefaultSubFunc:
+    curFuncSize = ida_getFunctionSize(curFuncAddr)
+    # print("curFuncSize=%s" % curFuncSize)
+    if curFuncSize <= MAX_INSTRUCTION_SIZE:
+      isNeedProcess = True
+  
+  return isNeedProcess
+
 
 ################################################################################
 # Main
@@ -350,97 +371,47 @@ def checkAllMovThenRet(instructionList):
 idaVersion = idaapi.IDA_SDK_VERSION
 print("IDA Version: %s" % idaVersion)
 
-# funcAddrList = [0x10235F980, 0x1023A2534, 0x1023A255C, 0x10235F998]
-funcAddrList = [0x1023A2578]
-for funcAddr in funcAddrList:
-  print("%s [0x%X] %s" % (mainDelimiter, funcAddr, mainDelimiter))
-  # # funcAddr = 0x1023A2534
-  # funcAddr = 0x1023A255C
-  # print("funcAddr=0x%X" % funcAddr)
+# toProcessFuncAddrList = [0x10235F980, 0x1023A2534, 0x1023A255C, 0x10235F998]
+# toProcessFuncAddrList = [0x1023A2578]
 
-  # insMnem = idc.print_insn_mnem(funcAddr)
-  # print("insMnem: type=%s, val=%s" % (type(insMnem), insMnem))
+allFuncAddrList = ida_getFunctionAddrList()
+allFuncAddrListNum = len(allFuncAddrList)
+print("allFuncAddrListNum=%d" % allFuncAddrListNum)
 
-  # # operandIdxList = [0, 1]
-  # operandIdxList = [0, 1, 2]
-  # for eachOperandIdx in operandIdxList:
-  #   print("%s [%d] %s" % (subDelimiter, eachOperandIdx, subDelimiter))
-  #   curOperand = idc.print_operand(funcAddr, eachOperandIdx)
-  #   print("curOperand: type=%s, val=%s" % (type(curOperand), curOperand))
-  #   curOperandType = idc.get_operand_type(funcAddr, eachOperandIdx)
-  #   print("curOperandType: type=%s, val=%s" % (type(curOperandType), curOperandType))
-  #   curOperandValue = idc.get_operand_value(funcAddr, eachOperandIdx)
-  #   print("curOperandValue: type=%s, val=%s" % (type(curOperandValue), curOperandValue))
+toProcessFuncAddrList = []
+for eachFuncAddr in allFuncAddrList:
+  isNeedProcess = isNeedProcessFunc(eachFuncAddr)
+  if isNeedProcess:
+    toProcessFuncAddrList.append(eachFuncAddr)
+    # print("+ [0x%X]" % eachFuncAddr)
 
+toProcessFuncAddrListNum = len(toProcessFuncAddrList)
+print("toProcessFuncAddrListNum=%d" % toProcessFuncAddrListNum)
+
+toRenameNum = 0
+renameOkNum = 0
+renameFailNum = 0
+
+for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
+  print("%s [%08d/%08d] 0x%X %s" % (mainDelimiter, curNum, toProcessFuncAddrListNum, funcAddr, mainDelimiter))
 
   funcName = ida_getFunctionName(funcAddr)
-  print("funcName=%s" % funcName)
+  # print("funcName=%s" % funcName)
 
   funcSize = ida_getFunctionSize(funcAddr)
-  print("funcSize: %d = 0x%X" % (funcSize, funcSize))
+  # print("funcSize: %d = 0x%X" % (funcSize, funcSize))
 
   funcEndAddr = ida_getFunctionEndAddr(funcAddr)
-  print("funcEndAddr=0x%X" % funcEndAddr)
+  # print("funcEndAddr=0x%X" % funcEndAddr)
 
   isAllMovThenRet = False
 
   disAsmInstList = []
 
-  # for curFuncAddr in range(funcAddr, funcEndAddr, SINGLE_INSTRUCTION_SIZE):
-  #   print("%s [0x%X] %s" % (subDelimiter, curFuncAddr, subDelimiter))
-
-  #   curDisasmLineStr = ida_getDissamLine(curFuncAddr)
-  #   print("curDisasmLineStr=%s" % curDisasmLineStr)
-  #   # MOV             X5, X0
-  #   # MOV             X0, X19
-  #   # MOV             X4, X21
-  #   # MOV             W2, #3
-  #   # MOV             X5, X23
-  #   # RET
-
-  #   # temp only support MOV Xd, Xn
-  #   # TODO: add more instruction support
-
-  #   isMovInst = False
-  #   regSrc = None
-  #   regDst = None
-  #   isRetInst = False
-
-  #   movInstMatch = re.search("MOV\s+(?P<regDst>X\d+)\s*,\s*(?P<regSrc>X\d+)", curDisasmLineStr, flags=re.I)
-  #   print("movInstMatch=%s" % movInstMatch)
-  #   if movInstMatch:
-  #     isMovInst = True
-  #     regSrc = movInstMatch.group("regSrc")
-  #     regDst = movInstMatch.group("regDst")
-  #   print("isMovInst=%s" % isMovInst)
-  #   print("regSrc=%s, regDst=%s" % (regSrc, regDst))
-
-  #   retInstMatch = re.search("RET", curDisasmLineStr, flags=re.I)
-  #   print("retInstMatch=%s" % retInstMatch)
-  #   if retInstMatch:
-  #     isRetInst = True
-  #   print("isRetInst=%s" % isRetInst)
-
-  #   curDisAsmDict = {
-  #     "disasm": curDisasmLineStr,
-  #     "mov": {
-  #       "isMov": isMovInst,
-  #       "regSrc": regSrc,
-  #       "regDst": regDst,
-  #     },
-  #     "ret": {
-  #       "isRet": isRetInst,
-  #     }
-  #   }
-  #   print("curDisAsmDict=%s" % curDisAsmDict)
-  #   disAsmInstList.append(curDisAsmDict)
-
-  # print("disAsmInstList=%s" % disAsmInstList)
-
   for curFuncAddr in range(funcAddr, funcEndAddr, SINGLE_INSTRUCTION_SIZE):
-    print("%s [0x%X] %s" % (subDelimiter, curFuncAddr, subDelimiter))
+    # print("%s [0x%X] %s" % (subDelimiter, curFuncAddr, subDelimiter))
     newInst = Instruction.parse(curFuncAddr)
-    # print("newInst=%s" % newInst)
+    print("newInst=%s" % newInst)
     disAsmInstList.append(newInst)
 
   isAllMovThenRet = checkAllMovThenRet(disAsmInstList)
@@ -468,14 +439,39 @@ for funcAddr in funcAddrList:
     # print("isFisrtIsDigit=%s" % isFisrtIsDigit)
     if isFisrtIsDigit:
       newFuncName = "func_%s" % newFuncName
-    print("newFuncName=%s" % newFuncName)
+    # print("newFuncName=%s" % newFuncName)
+    # print("To rename: [0x%X] %s -> %s" % (funcAddr, funcName, newFuncName))
+
+    toRenameNum += 1
 
     isRenameOk = idc.set_name(funcAddr, newFuncName)
-    print("isRenameOk=%s" % isRenameOk)
+    # print("isRenameOk=%s" % isRenameOk)
     if isRenameOk == 1:
       resultStr = "ok"
+      renameOkNum += 1
     else:
       resultStr = "fail"
+      # renameFailNum += 1
+      # rename with full address suffix
+      newFuncNameNoAddrSuffix = re.sub("_[0-9A-Za-z]{4}$", "", newFuncName)
+      print("newFuncNameNoAddrSuffix=%s" % newFuncNameNoAddrSuffix)
+      newFuncName = "%s_%X" % (newFuncNameNoAddrSuffix, funcAddr)
+      print("newFuncName=%s" % newFuncName)
+      isRenameOk = idc.set_name(funcAddr, newFuncName)
+      if isRenameOk == 1:
+        resultStr = "ok"
+        renameOkNum += 1
+      else:
+        resultStr = "fail"
+        renameFailNum += 1
     print("rename %s: [0x%X] %s -> %s" % (resultStr, funcAddr, funcName, newFuncName))
-  else:
-    print("Unsupport [0x%X] %s" % (funcAddr, Instruction.listToStr(disAsmInstList)))
+  # else:
+  #   print("Unsupport [0x%X] %s" % (funcAddr, Instruction.listToStr(disAsmInstList)))
+
+
+print("%s Summary Info %s" % (subDelimiter, subDelimiter))
+print("Total Functions num: %d" % len(allFuncAddrList))
+print("To process function num: %d" % toProcessFuncAddrListNum)
+print("To rename function num: %d" % toRenameNum)
+print("  rename OK   num: %d" % renameOkNum)
+print("  rename fail num: %d" % renameFailNum)
