@@ -3,20 +3,36 @@
 # Update: 20231210
 
 import re
+import os
 import json
+
+import os
+from datetime import datetime,timedelta
+from datetime import time  as datetimeTime
+# import time
+import codecs
+
 import idc
 import idaapi
 import idautils
-# from idaapi import PluginForm
-# import ida_nalt
-# import ida_segment
+import ida_nalt
+import ida_segment
 
 ################################################################################
 # Config & Settings & Const
 ################################################################################
 
-# isVerbose = False
-isVerbose = True
+# verbose log
+isVerbose = False
+# isVerbose = True
+
+# export result to json file
+# isExportResult = False
+isExportResult = True
+
+if isExportResult:
+  outputFolder = None
+  # outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
 
 SINGLE_INSTRUCTION_SIZE = 4 # bytes
 # for rename, the max number of instruction to support
@@ -24,23 +40,255 @@ SINGLE_INSTRUCTION_SIZE = 4 # bytes
 MAX_INSTRUCTION_NUM = 8
 MAX_INSTRUCTION_SIZE = MAX_INSTRUCTION_NUM * SINGLE_INSTRUCTION_SIZE
 
-subDelimiter = "-"*30
-mainDelimiter = "="*40
-
 ################################################################################
 # Util Function
 ################################################################################
 
+def logMain(mainStr):
+  mainDelimiter = "="*40
+  print("%s %s %s" % (mainDelimiter, mainStr, mainDelimiter))
+
+def logSub(subStr):
+  subDelimiter = "-"*30
+  print("%s %s %s" % (subDelimiter, subStr, subDelimiter))
+
+def datetimeToStr(inputDatetime, format="%Y%m%d_%H%M%S"):
+    """Convert datetime to string
+
+    Args:
+        inputDatetime (datetime): datetime value
+    Returns:
+        str
+    Raises:
+    Examples:
+        datetime.datetime(2020, 4, 21, 15, 44, 13, 2000) -> '20200421_154413'
+    """
+    datetimeStr = inputDatetime.strftime(format=format)
+    # print("inputDatetime=%s -> datetimeStr=%s" % (inputDatetime, datetimeStr)) # 2020-04-21 15:08:59.787623
+    return datetimeStr
+
+def getCurDatetimeStr(outputFormat="%Y%m%d_%H%M%S"):
+    """
+    get current datetime then format to string
+
+    eg:
+        20171111_220722
+
+    :param outputFormat: datetime output format
+    :return: current datetime formatted string
+    """
+    curDatetime = datetime.now() # 2017-11-11 22:07:22.705101
+    # curDatetimeStr = curDatetime.strftime(format=outputFormat) #'20171111_220722'
+    curDatetimeStr = datetimeToStr(curDatetime, format=outputFormat)
+    return curDatetimeStr
+
+def saveJsonToFile(fullFilename, jsonValue, indent=2, fileEncoding="utf-8"):
+    """
+        save json dict into file
+        for non-ascii string, output encoded string, without \\u xxxx
+    """
+    with codecs.open(fullFilename, 'w', encoding=fileEncoding) as jsonFp:
+        json.dump(jsonValue, jsonFp, indent=indent, ensure_ascii=False)
+        # logging.debug("Complete save json %s", fullFilename)
+
+
+################################################################################
+# IDA Util Function
+################################################################################
+
+def ida_getInfo():
+  """
+  get IDA info
+  """
+  info = idaapi.get_inf_structure()
+  # print("info=%s" % info)
+  return info
+
+def ida_printInfo(info):
+  """
+  print IDA info
+  """
+  version = info.version
+  print("version=%s" % version)
+  is64Bit = info.is_64bit()
+  print("is64Bit=%s" % is64Bit)
+  procName = info.procname
+  print("procName=%s" % procName)
+  entryPoint = info.start_ea
+  print("entryPoint=0x%X" % entryPoint)
+  baseAddr = info.baseaddr
+  print("baseAddr=0x%X" % baseAddr)
+
+def ida_printAllImports():
+  """
+  print all imports lib and functions inside lib"""
+  nimps = ida_nalt.get_import_module_qty()
+  print("Found %d import(s)..." % nimps)
+  for i in range(nimps):
+    name = ida_nalt.get_import_module_name(i)
+    if not name:
+      print("Failed to get import module name for [%d] %s" % (i, name))
+      name = "<unnamed>"
+    else:
+      print("[%d] %s" % (i, name))
+
+    def imp_cb(ea, name, ordinal):
+        if not name:
+            print("%08x: ordinal #%d" % (ea, ordinal))
+        else:
+            print("%08x: %s (ordinal #%d)" % (ea, name, ordinal))
+        # True -> Continue enumeration
+        # False -> Stop enumeration
+        return True
+    ida_nalt.enum_import_names(i, imp_cb)
+
+def ida_printSegment(curSeg):
+  """
+  print segment info
+    Note: in IDA, segment == section
+  """
+  segName = curSeg.name
+  # print("type(segName)=%s" % type(segName))
+  segSelector = curSeg.sel
+  segStartAddr = curSeg.start_ea
+  segEndAddr = curSeg.end_ea
+  print("Segment: [0x%X-0x%X] name=%s, selector=%s : seg=%s" % (segStartAddr, segEndAddr, segName, segSelector, curSeg))
+
+def ida_getSegmentList():
+  """
+  get segment list
+  """
+  segList = []
+  segNum = ida_segment.get_segm_qty()
+  for segIdx in range(segNum):
+    curSeg = ida_segment.getnseg(segIdx)
+    # print("curSeg=%s" % curSeg)
+    segList.append(curSeg)
+    # ida_printSegment(curSeg)
+  return segList
+
+def ida_testGetSegment():
+  """
+  test get segment info
+  """
+  # textSeg = ida_segment.get_segm_by_name("__TEXT")
+  # dataSeg = ida_segment.get_segm_by_name("__DATA")
+
+  # ida_getSegmentList()
+
+  # NAME___TEXT = "21"
+  # NAME___TEXT = 21
+  # NAME___TEXT = "__TEXT,__text"
+  # NAME___TEXT = "__TEXT:__text"
+  # NAME___TEXT = ".text"
+
+  """
+    __TEXT,__text
+    __TEXT,__stubs
+    __TEXT,__stub_helper
+    __TEXT,__objc_stubs
+    __TEXT,__const
+    __TEXT,__objc_methname
+    __TEXT,__cstring
+    __TEXT,__swift5_typeref
+    __TEXT,__swift5_protos
+    __TEXT,__swift5_proto
+    __TEXT,__swift5_types
+    __TEXT,__objc_classname
+    __TEXT,__objc_methtype
+    __TEXT,__gcc_except_tab
+    __TEXT,__ustring
+    __TEXT,__unwind_info
+    __TEXT,__eh_frame
+    __TEXT,__oslogstring
+
+    __DATA,__got
+    __DATA,__la_symbol_ptr
+    __DATA,__mod_init_func
+    __DATA,__const
+    __DATA,__cfstring
+    __DATA,__objc_classlist
+    __DATA,__objc_catlist
+    __DATA,__objc_protolist
+    __DATA,__objc_imageinfo
+    __DATA,__objc_const
+    __DATA,__objc_selrefs
+    __DATA,__objc_protorefs
+    __DATA,__objc_classrefs
+    __DATA,__objc_superrefs
+    __DATA,__objc_ivar
+    __DATA,__objc_data
+    __DATA,__data
+    __DATA,__objc_stublist
+    __DATA,__swift_hooks
+    __DATA,__swift51_hooks
+    __DATA,__s_async_hook
+    __DATA,__swift56_hooks
+    __DATA,__thread_vars
+    __DATA,__thread_bss
+    __DATA,__bss
+    __DATA,__common
+  """
+
+  # __TEXT,__text
+  NAME___text = "__text"
+  textSeg = ida_segment.get_segm_by_name(NAME___text)
+  print("textSeg: %s -> %s" % (NAME___text, textSeg))
+  ida_printSegment(textSeg)
+
+  # __TEXT,__objc_methname
+  NAME___objc_methname = "__objc_methname"
+  objcMethNameSeg = ida_segment.get_segm_by_name(NAME___objc_methname)
+  print("objcMethNameSeg: %s -> %s" % (NAME___objc_methname, objcMethNameSeg))
+  ida_printSegment(objcMethNameSeg)
+
+  # __DATA,__got
+  NAME___got = "__got"
+  gotSeg = ida_segment.get_segm_by_name(NAME___got)
+  print("gotSeg: %s -> %s" % (NAME___got, gotSeg))
+  ida_printSegment(gotSeg)
+
+  # __DATA,__data
+  # NAME___DATA = "22"
+  # NAME___DATA = 22
+  NAME___DATA = "__data"
+  dataSeg = ida_segment.get_segm_by_name(NAME___DATA)
+  print("dataSeg: %s -> %s" % (NAME___DATA, dataSeg))
+  ida_printSegment(dataSeg)
+
+  # exist two one: __TEXT,__const / __DATA,__const
+  NAME___const = "__const"
+  constSeg = ida_segment.get_segm_by_name(NAME___const)
+  print("constSeg: %s -> %s" % (NAME___const, constSeg))
+  ida_printSegment(constSeg)
+
+def ida_getDemangledName(origSymbolName):
+  """
+  use IDA to get demangled name for original symbol name
+  """
+  retName = origSymbolName
+  # demangledName = idc.demangle_name(origSymbolName, idc.get_inf_attr(idc.INF_SHORT_DN))
+  # https://hex-rays.com/products/ida/support/ida74_idapython_no_bc695_porting_guide.shtml
+  demangledName = idc.demangle_name(origSymbolName, idc.get_inf_attr(idc.INF_SHORT_DEMNAMES))
+  if demangledName:
+    retName = demangledName
+  return retName
+
+
 def ida_getFunctionEndAddr(funcAddr):
   """
-  0x1023A2534 -> 0x1023A2540
+  get function end address
+    Example:
+      0x1023A2534 -> 0x1023A2540
   """
   funcAddrEnd = idc.get_func_attr(funcAddr, attr=idc.FUNCATTR_END)
   return funcAddrEnd
 
 def ida_getFunctionSize(funcAddr):
   """
-  0x1023A2534 -> 12
+  get function size
+    Example:
+      0x1023A2534 -> 12
   """
   funcAddrEnd = idc.get_func_attr(funcAddr, attr=idc.FUNCATTR_END)
   funcAddStart = idc.get_func_attr(funcAddr, attr=idc.FUNCATTR_START)
@@ -49,14 +297,18 @@ def ida_getFunctionSize(funcAddr):
 
 def ida_getFunctionName(funcAddr):
   """
-  0x1023A2534 -> "sub_1023A2534"
+  get function name
+    Exmaple:
+      0x1023A2534 -> "sub_1023A2534"
   """
   funcName = idc.get_func_name(funcAddr)
   return funcName
 
-def ida_getDissamLine(funcAddr):
+def ida_getDisasmStr(funcAddr):
   """
-  0x1023A2534 -> "MOV             X5, X0"
+  get disasmemble string
+    Exmaple:
+      0x1023A2534 -> "MOV X5, X0"
   """
   # method 1: generate_disasm_line
   # disasmLine_forceCode = idc.generate_disasm_line(funcAddr, idc.GENDSM_FORCE_CODE)
@@ -76,36 +328,68 @@ def ida_getDissamLine(funcAddr):
   return disasmLine
 
 def ida_getFunctionAddrList():
+  """
+  get function address list
+  """
   functionIterator = idautils.Functions()
   functionAddrList = []
   for curFuncAddr in functionIterator:
     functionAddrList.append(curFuncAddr)
   return functionAddrList
 
-
 def ida_rename(curAddr, newName, retryName=None):
   """
-    rename <curAddr> to <newName>. if fail, retry with with <retryName> if not None
+  rename <curAddr> to <newName>. if fail, retry with with <retryName> if not None
+    Example:
+      0x3B4E28, "X2toX21_X1toX20_X0toX19_4E28", "X2toX21_X1toX20_X0toX19_3B4E28" -> True, "X2toX21_X1toX20_X0toX19_4E28"
   """
-  print("curAddr=0x%X, newName=%s, retryName=%s" % (curAddr, newName, retryName))
+  # print("curAddr=0x%X, newName=%s, retryName=%s" % (curAddr, newName, retryName))
   isRenameOk = False
   renamedName = None
 
   isOk = idc.set_name(curAddr, newName)
-  print("isOk=%s" % isOk)
+  # print("isOk=%s for [0x%X] -> %s" % (isOk, curAddr, newName))
   if isOk == 1:
     isRenameOk = True
     renamedName = newName
   else:
     if retryName:
       isOk = idc.set_name(curAddr, retryName)
-      print("isOk=%s" % isOk)
+      # print("isOk=%s for [0x%X] -> %s" % (isOk, curAddr, retryName))
       if isOk == 1:
         isRenameOk = True
         renamedName = retryName
 
-  print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
+  # print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
   return (isRenameOk, renamedName)
+
+def ida_getCurrentFolder():
+  """
+  get current folder for IDA current opened binary file
+    Example:
+      -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app
+      -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app/Frameworks/SharedModules.framework
+  """
+  curFolder = None
+  inputFileFullPath = ida_nalt.get_input_file_path()
+  # print("inputFileFullPath=%s" % inputFileFullPath)
+  if inputFileFullPath.startswith("/var/containers/Bundle/Application"):
+    # inputFileFullPath=/var/containers/Bundle/Application/2BE964D4-8DF0-4858-A06D-66CA8741ACDC/WhatsApp.app/WhatsApp
+    # -> maybe IDA bug -> after debug settings, output iOS device path, but later no authority to write exported file to it
+    # so need to avoid this case, change to output to PC side (Mac) current folder
+    curFolder = "."
+  else:
+    curFolder = os.path.dirname(inputFileFullPath)
+  # print("curFolder=%s" % curFolder)
+
+  # debugInputPath = ida_nalt.dbg_get_input_path()
+  # print("debugInputPath=%s" % debugInputPath)
+
+  curFolder = os.path.abspath(curFolder)
+  # print("curFolder=%s" % curFolder)
+  # here work:
+  # . -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app
+  return curFolder
 
 class Operand:
   # Operand Type
@@ -231,7 +515,7 @@ class Operand:
         contentStr = "%X" % self.immVal
       else:
         contentStr = self.immValHex
-    print("contentStr=%s" % contentStr)
+    # print("contentStr=%s" % contentStr)
     # TODO: add more case
     return contentStr
 
@@ -239,7 +523,9 @@ class Operand:
   def regIdx(self):
     curRegIdx = None
     if self.isReg():
-      # TODO: extract reg idx
+      # TODO: extract reg idx, 
+      # eg: X0 -> 0, X4 -> 4
+      # note: additonal: D0 -> 0, D8 -> 8 ?
       curRegIdx = 0
     return curRegIdx
 
@@ -248,7 +534,7 @@ class Operand:
 class Instruction:
   def __init__(self, addr, name, operands):
     self.addr = addr
-    self.disAsmStr = ida_getDissamLine(addr)
+    self.disAsmStr = ida_getDisasmStr(addr)
     # print("self.disAsmStr=%s" % self.disAsmStr)
     self.name = name
     self.operands = operands
@@ -257,14 +543,15 @@ class Instruction:
     # operandsAllStr = Operand.listToStr(self.operands)
     # print("operandsAllStr=%s" % operandsAllStr)
     # curInstStr = "<Instruction: addr=0x%X,name=%s,operands=%s>" % (self.addr, self.name, operandsAllStr)
-    curInstStr = "<Instruction: addr=0x%X,disAsmStr=%s>" % (self.addr, self.disAsmStr)
+    # curInstStr = "<Instruction: addr=0x%X,disAsmStr=%s>" % (self.addr, self.disAsmStr)
+    curInstStr = "<Instruction: 0x%X: %s>" % (self.addr, self.disAsmStr)
     # print("curInstStr=%s" % curInstStr)
     return curInstStr
 
   @staticmethod
   def listToStr(instList):
-    instStrList = [str(eachInst) for eachInst in instList]
-    instListAllStr = ", ".join(instStrList)
+    instContentStrList = [str(eachInst) for eachInst in instList]
+    instListAllStr = ", ".join(instContentStrList)
     instListAllStr = "[%s]" % instListAllStr
     return instListAllStr
 
@@ -279,7 +566,7 @@ class Instruction:
     curOperandVaild = True
     operandList = []
     while curOperandVaild:
-      # print("%s [%d] %s" % (subDelimiter, curOperandIdx, subDelimiter))
+      # logSub("[%d]" % curOperandIdx)
       curOperand = idc.print_operand(addr, curOperandIdx)
       # print("curOperand=%s" % curOperand)
       curOperandType = idc.get_operand_type(addr, curOperandIdx)
@@ -316,7 +603,7 @@ class Instruction:
     convert to meaningful string of Instruction real action / content
     """
     contentStr = ""
-    if self.isMov():
+    if self.isMov() or self.isFmov():
       operandNum = len(self.operands)
       if operandNum == 2:
         srcOperand = self.operands[1]
@@ -338,6 +625,9 @@ class Instruction:
   def isMov(self):
     return self.isInst("MOV")
 
+  def isFmov(self):
+    return self.isInst("FMOV")
+
   def isRet(self):
     return self.isInst("RET")
 
@@ -353,6 +643,10 @@ class Instruction:
   def isLdr(self):
     return self.isInst("LDR")
 
+################################################################################
+# Current Project Functions
+################################################################################
+
 def checkAllMovThenRet(instructionList):
   isAllMovThenRet = False
 
@@ -367,7 +661,8 @@ def checkAllMovThenRet(instructionList):
 
     isAllMov = True
     for eachInst in instListExceptLast:
-      if not eachInst.isMov():
+      isMovLikeInst = eachInst.isMov() or eachInst.isFmov()
+      if not isMovLikeInst:
         isAllMov = False
         break
     # print("isAllMov=%s" % isAllMov)
@@ -375,6 +670,10 @@ def checkAllMovThenRet(instructionList):
 
   # print("isAllMovThenRet=%s" % isAllMovThenRet)
   return isAllMovThenRet
+
+def isFuncSizeValid(funcSize):
+  # note: not include invalid size: 0
+  return (funcSize > 0) and (funcSize <= MAX_INSTRUCTION_SIZE)
 
 def isNeedProcessFunc(curFuncAddr):
   isNeedProcess = False
@@ -385,7 +684,8 @@ def isNeedProcessFunc(curFuncAddr):
   if isDefaultSubFunc:
     curFuncSize = ida_getFunctionSize(curFuncAddr)
     # print("curFuncSize=%s" % curFuncSize)
-    if curFuncSize <= MAX_INSTRUCTION_SIZE:
+    # if curFuncSize <= MAX_INSTRUCTION_SIZE:
+    if isFuncSizeValid(curFuncSize):
       isNeedProcess = True
   
   return isNeedProcess
@@ -398,11 +698,24 @@ def isNeedProcessFunc(curFuncAddr):
 idaVersion = idaapi.IDA_SDK_VERSION
 print("IDA Version: %s" % idaVersion)
 
+if isExportResult:
+  curDateTimeStr = getCurDatetimeStr()
+  print("curDateTimeStr=%s" % curDateTimeStr)
+
+  if not outputFolder:
+    outputFolder = ida_getCurrentFolder()
+    print("outputFolder=%s" % outputFolder)
+
 # # for debug
 # # toProcessFuncAddrList = [0x10235F980, 0x1023A2534, 0x1023A255C, 0x10235F998]
 # # toProcessFuncAddrList = [0x1023A2578]
 # # toProcessFuncAddrList = [0x3B4E28]
-# toProcessFuncAddrList = [0x3B4EC4, 0x3B4ED4]
+# # toProcessFuncAddrList = [0x3B4EC4, 0x3B4ED4, 0x3B5068, 0x3B7140, 0x3B9978]
+# # toProcessFuncAddrList = [0x4C491C, 0x4C499C, 0x4C49E0, 0x4C49D4]
+# # toProcessFuncAddrList = [0x4C49C4, 0x4C5E0C, 0x4C5E00, 0x4C7E0C, 0x4C7FB8]
+# # toProcessFuncAddrList = [0x4C800C, 0x4C8038]
+# # toProcessFuncAddrList = [0x4C9D34, 0x4C9D50, 0x4D0550]
+# toProcessFuncAddrList = [0xF147B0]
 # allFuncAddrList = toProcessFuncAddrList
 
 allFuncAddrList = ida_getFunctionAddrList()
@@ -423,75 +736,134 @@ toRenameNum = 0
 renameOkNum = 0
 renameFailNum = 0
 
+if isExportResult:
+  renameDict = {}
+  renameOkList_allMovThenRet = []
+  renameOkList_allMovThenB = []
+  renameOkList_prologue = []
+  renameFailList = []
+
 for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
-  print("%s [%08d/%08d] 0x%X %s" % (mainDelimiter, curNum, toProcessFuncAddrListNum, funcAddr, mainDelimiter))
+  funcAddrStr = "0x%X" % funcAddr
+  logMain("[%08d/%08d] %s" % (curNum, toProcessFuncAddrListNum, funcAddrStr))
 
   funcName = ida_getFunctionName(funcAddr)
-  # print("funcName=%s" % funcName)
-
   funcSize = ida_getFunctionSize(funcAddr)
-  # print("funcSize: %d = 0x%X" % (funcSize, funcSize))
+  if not isFuncSizeValid(funcSize):
+    print("Omit [%s] for invalid function size %d" % (funcAddrStr, funcSize))
+    continue
 
   funcEndAddr = ida_getFunctionEndAddr(funcAddr)
-  # print("funcEndAddr=0x%X" % funcEndAddr)
+
+  if isVerbose:
+    print("funcName=%s, funcSize=%d=0x%X, funcEndAddr=0x%X" % (funcName, funcSize, funcSize, funcEndAddr))
 
   isAllMovThenRet = False
 
   disAsmInstList = []
-
   for curFuncAddr in range(funcAddr, funcEndAddr, SINGLE_INSTRUCTION_SIZE):
-    # print("%s [0x%X] %s" % (subDelimiter, curFuncAddr, subDelimiter))
+    # if isVerbose:
+    #   logSub("[0x%X]" % curFuncAddr)
     newInst = Instruction.parse(curFuncAddr)
-    print("newInst=%s" % newInst)
+    # if isVerbose:
+    #   print("newInst=%s" % newInst)
     disAsmInstList.append(newInst)
 
   isAllMovThenRet = checkAllMovThenRet(disAsmInstList)
-  print("isAllMovThenRet=%s" % isAllMovThenRet)
+  if isVerbose:
+    print("isAllMovThenRet=%s" % isAllMovThenRet)
+
   if isAllMovThenRet:
     instListExceptLast = disAsmInstList[0:-1]
-    instStrList = []
+    instContentStrList = []
     for eachInst in instListExceptLast:
-      eachInstStr = eachInst.contentStr
-      # print("eachInstStr=%s" % eachInstStr)
-      instStrList.append(eachInstStr)
+      eachInstContentStr = eachInst.contentStr
+      # print("eachInstContentStr=%s" % eachInstContentStr)
+      instContentStrList.append(eachInstContentStr)
+    
+    if isVerbose:
+      instDisasmStrList = Instruction.listToStr(disAsmInstList)
+      print("instDisasmStrList=%s" % instDisasmStrList)
 
     allAddrStr = "%X" % funcAddr
-    print("allAddrStr=%s" % allAddrStr)
+    # print("allAddrStr=%s" % allAddrStr)
     addrLast4Str = allAddrStr[-4:]
-    print("addrLast4Str=%s" % addrLast4Str)
+    # print("addrLast4Str=%s" % addrLast4Str)
 
-    funcAllInstStr = "_".join(instStrList)
-    # print("funcAllInstStr=%s" % funcAllInstStr)
+    funcContentStr = "_".join(instContentStrList)
+    # print("funcContentStr=%s" % funcContentStr)
 
     prefixStr = ""
-    isFisrtIsDigit = re.match("^\d+", funcAllInstStr)
+    isFisrtIsDigit = re.match("^\d+", funcContentStr)
     # print("isFisrtIsDigit=%s" % isFisrtIsDigit)
     if isFisrtIsDigit:
       prefixStr = "func_"
-    
-    funcNamePrevPart = "%s%s" % (prefixStr, funcAllInstStr)
-    print("funcNamePrevPart=%s" % funcNamePrevPart)
+
+    funcNamePrevPart = "%s%s" % (prefixStr, funcContentStr)
+    # print("funcNamePrevPart=%s" % funcNamePrevPart)
 
     newFuncName = "%s_%s" % (funcNamePrevPart, addrLast4Str)
-    print("newFuncName=%s" % newFuncName)
+    # print("newFuncName=%s" % newFuncName)
     retryFuncName = "%s_%s" % (funcNamePrevPart, allAddrStr)
-    print("retryFuncName=%s" % retryFuncName)
+    # print("retryFuncName=%s" % retryFuncName)
 
-    # toRenameNum += 1
-    # isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
-    # print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
-    # if isRenameOk:
-    #   renameOkNum += 1
-    #   print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
-    # else:
-    #   renameFailNum += 1
+    # for debug
+    # print("Test to rename: [0x%X] %s, %s" % (funcAddr, newFuncName, retryFuncName))
+
+    toRenameNum += 1
+    isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
+    if isVerbose:
+      print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
+    if isRenameOk:
+      renameOkNum += 1
+      print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
+      if isExportResult:
+        renameOkDict_allMovThenRet = {
+          "address": funcAddrStr,
+          "oldName": funcName,
+          "newName": renamedName,
+        }
+        renameOkList_allMovThenRet.append(renameOkDict_allMovThenRet)
+    else:
+      print("! rename fail for [0x%X] %s -> %s or %s" % (funcAddr, funcName, renamedName, retryFuncName))
+      renameFailNum += 1
+      if isExportResult:
+        renameFailDict = {
+          "address": funcAddrStr,
+          "oldName": funcName,
+          "newName": newFuncName,
+          "retryName": retryFuncName,
+        }
+        renameFailList.append(renameFailDict)
   # else:
   #   print("Unsupport [0x%X] %s" % (funcAddr, Instruction.listToStr(disAsmInstList)))
 
-
-print("%s Summary Info %s" % (subDelimiter, subDelimiter))
+logMain("Summary Info")
 print("Total Functions num: %d" % len(allFuncAddrList))
 print("To process function num: %d" % toProcessFuncAddrListNum)
 print("To rename function num: %d" % toRenameNum)
 print("  rename OK   num: %d" % renameOkNum)
 print("  rename fail num: %d" % renameFailNum)
+
+if isExportResult:
+  logMain("Export result to file")
+
+  renameDict = {
+    "ok": {
+      "allMovThenRet": renameOkList_allMovThenRet,
+      "allMovThenB": renameOkList_allMovThenB,
+      "prologue": renameOkList_prologue,
+    },
+    "fail": renameFailList,
+  }
+
+  outputFilename = "IDA_renamedResult_%s.json" % curDateTimeStr
+  # print("outputFilename=%s" % outputFilename)
+  outputFullPath = os.path.join(outputFolder, outputFilename)
+  # print("outputFullPath=%s" % outputFullPath)
+
+  print("Exporting result to file ...")
+  print("  folder: %s" % outputFolder)
+  print("  file: %s" % outputFilename)
+  saveJsonToFile(outputFullPath, renameDict)
+  print("Exported: %s" % outputFullPath)
