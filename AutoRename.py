@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20231209
+# Update: 20231210
 
 import re
 import json
@@ -81,6 +81,31 @@ def ida_getFunctionAddrList():
   for curFuncAddr in functionIterator:
     functionAddrList.append(curFuncAddr)
   return functionAddrList
+
+
+def ida_rename(curAddr, newName, retryName=None):
+  """
+    rename <curAddr> to <newName>. if fail, retry with with <retryName> if not None
+  """
+  print("curAddr=0x%X, newName=%s, retryName=%s" % (curAddr, newName, retryName))
+  isRenameOk = False
+  renamedName = None
+
+  isOk = idc.set_name(curAddr, newName)
+  print("isOk=%s" % isOk)
+  if isOk == 1:
+    isRenameOk = True
+    renamedName = newName
+  else:
+    if retryName:
+      isOk = idc.set_name(curAddr, retryName)
+      print("isOk=%s" % isOk)
+      if isOk == 1:
+        isRenameOk = True
+        renamedName = retryName
+
+  print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
+  return (isRenameOk, renamedName)
 
 class Operand:
   # Operand Type
@@ -371,8 +396,11 @@ def isNeedProcessFunc(curFuncAddr):
 idaVersion = idaapi.IDA_SDK_VERSION
 print("IDA Version: %s" % idaVersion)
 
-# toProcessFuncAddrList = [0x10235F980, 0x1023A2534, 0x1023A255C, 0x10235F998]
-# toProcessFuncAddrList = [0x1023A2578]
+# # for debug
+# # toProcessFuncAddrList = [0x10235F980, 0x1023A2534, 0x1023A255C, 0x10235F998]
+# # toProcessFuncAddrList = [0x1023A2578]
+# toProcessFuncAddrList = [0x3B4E28]
+# allFuncAddrList = toProcessFuncAddrList
 
 allFuncAddrList = ida_getFunctionAddrList()
 allFuncAddrListNum = len(allFuncAddrList)
@@ -424,47 +452,36 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
       # print("eachInstStr=%s" % eachInstStr)
       instStrList.append(eachInstStr)
 
-    funcAddrHexStr = "0x%X" % funcAddr
-    # print("funcAddrHexStr=%s" % funcAddrHexStr)
-    addrLast4Str = funcAddrHexStr[-4:]
-    # print("addrLast4Str=%s" % addrLast4Str)
+    allAddrStr = "%X" % funcAddr
+    print("allAddrStr=%s" % allAddrStr)
+    addrLast4Str = allAddrStr[-4:]
+    print("addrLast4Str=%s" % addrLast4Str)
 
     funcAllInstStr = "_".join(instStrList)
     # print("funcAllInstStr=%s" % funcAllInstStr)
 
-    newFuncName = "%s_%s" % (funcAllInstStr, addrLast4Str)
-    # print("newFuncName=%s" % newFuncName)
-
+    prefixStr = ""
     isFisrtIsDigit = re.match("^\d+", funcAllInstStr)
     # print("isFisrtIsDigit=%s" % isFisrtIsDigit)
     if isFisrtIsDigit:
-      newFuncName = "func_%s" % newFuncName
-    # print("newFuncName=%s" % newFuncName)
-    # print("To rename: [0x%X] %s -> %s" % (funcAddr, funcName, newFuncName))
+      prefixStr = "func_"
+    
+    funcNamePrevPart = "%s%s" % (prefixStr, funcAllInstStr)
+    print("funcNamePrevPart=%s" % funcNamePrevPart)
+
+    newFuncName = "%s_%s" % (funcNamePrevPart, addrLast4Str)
+    print("newFuncName=%s" % newFuncName)
+    retryFuncName = "%s_%s" % (funcNamePrevPart, allAddrStr)
+    print("retryFuncName=%s" % retryFuncName)
 
     toRenameNum += 1
-
-    isRenameOk = idc.set_name(funcAddr, newFuncName)
-    # print("isRenameOk=%s" % isRenameOk)
-    if isRenameOk == 1:
-      resultStr = "ok"
+    isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
+    print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
+    if isRenameOk:
       renameOkNum += 1
+      print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
     else:
-      resultStr = "fail"
-      # renameFailNum += 1
-      # rename with full address suffix
-      newFuncNameNoAddrSuffix = re.sub("_[0-9A-Za-z]{4}$", "", newFuncName)
-      print("newFuncNameNoAddrSuffix=%s" % newFuncNameNoAddrSuffix)
-      newFuncName = "%s_%X" % (newFuncNameNoAddrSuffix, funcAddr)
-      print("newFuncName=%s" % newFuncName)
-      isRenameOk = idc.set_name(funcAddr, newFuncName)
-      if isRenameOk == 1:
-        resultStr = "ok"
-        renameOkNum += 1
-      else:
-        resultStr = "fail"
-        renameFailNum += 1
-    print("rename %s: [0x%X] %s -> %s" % (resultStr, funcAddr, funcName, newFuncName))
+      renameFailNum += 1
   # else:
   #   print("Unsupport [0x%X] %s" % (funcAddr, Instruction.listToStr(disAsmInstList)))
 
