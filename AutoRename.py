@@ -225,11 +225,13 @@ class Operand:
       contentStr = self.regName
     elif self.isImm():
       # print("isImm")
-      if 0 == self.immVal:
-        contentStr = "0"
+      # if 0 == self.immVal:
+      if (self.immVal >= 0) and (self.immVal < 8):
+        # contentStr = "0"
+        contentStr = "%X" % self.immVal
       else:
         contentStr = self.immValHex
-    # print("contentStr=%s" % contentStr)
+    print("contentStr=%s" % contentStr)
     # TODO: add more case
     return contentStr
 
@@ -399,7 +401,8 @@ print("IDA Version: %s" % idaVersion)
 # # for debug
 # # toProcessFuncAddrList = [0x10235F980, 0x1023A2534, 0x1023A255C, 0x10235F998]
 # # toProcessFuncAddrList = [0x1023A2578]
-# toProcessFuncAddrList = [0x3B4E28]
+# # toProcessFuncAddrList = [0x3B4E28]
+# toProcessFuncAddrList = [0x3B4EC4, 0x3B4ED4]
 # allFuncAddrList = toProcessFuncAddrList
 
 allFuncAddrList = ida_getFunctionAddrList()
@@ -474,14 +477,14 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
     retryFuncName = "%s_%s" % (funcNamePrevPart, allAddrStr)
     print("retryFuncName=%s" % retryFuncName)
 
-    toRenameNum += 1
-    isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
-    print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
-    if isRenameOk:
-      renameOkNum += 1
-      print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
-    else:
-      renameFailNum += 1
+    # toRenameNum += 1
+    # isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
+    # print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
+    # if isRenameOk:
+    #   renameOkNum += 1
+    #   print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
+    # else:
+    #   renameFailNum += 1
   # else:
   #   print("Unsupport [0x%X] %s" % (funcAddr, Instruction.listToStr(disAsmInstList)))
 
