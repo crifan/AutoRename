@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20231210
+# Update: 20231214
 
 import re
 import os
@@ -31,8 +31,8 @@ isVerbose = False
 isExportResult = True
 
 if isExportResult:
-  outputFolder = None
-  # outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
+  # outputFolder = None
+  outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
 
 SINGLE_INSTRUCTION_SIZE = 4 # bytes
 # for rename, the max number of instruction to support
@@ -391,6 +391,52 @@ def ida_getCurrentFolder():
   # . -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app
   return curFolder
 
+def isDefaultSubFuncName(funcName):
+  """
+  check is default sub_XXX function or not from name
+  eg:
+    sub_F332C0 -> True, "F332C0"
+  """
+  isSub = False
+  addStr = None
+  # subMatch = re.match("^sub_[0-9A-Za-z]+$", funcName)
+  subMatch = re.match("^sub_(?P<addStr>[0-9A-Fa-f]+)$", funcName)
+  # print("subMatch=%s" % subMatch)
+  if subMatch:
+    isSub = True
+    addStr = subMatch.group("addStr")
+  return isSub, addStr
+
+def isReservedPrefix_loc(funcName):
+  """
+  check is reserved prefix loc_XXX name or not
+  eg:
+    loc_100007A2C -> True, "100007A2C"
+  """
+  isLoc = False
+  addStr = None
+  locMatch = re.match("^loc_(?P<addStr>[0-9A-Fa-f]+)$", funcName)
+  # print("locMatch=%s" % locMatch)
+  if locMatch:
+    isLoc = True
+    addStr = locMatch.group("addStr")
+  return isLoc, addStr
+
+def isDefaultSubFunction(curAddr):
+  """
+  check is default sub_XXX function or not from address
+  """
+  isDefSubFunc = False
+  curFuncName  = ida_getFunctionName(curAddr)
+  # print("curFuncName=%s" % curFuncName)
+  if curFuncName:
+    isDefSubFunc, subAddStr = isDefaultSubFuncName(curFuncName)
+  return isDefSubFunc, curFuncName
+
+################################################################################
+# IDA Util Class
+################################################################################
+
 class Operand:
   # Operand Type
   # https://hex-rays.com/products/ida/support/idapython_docs/idc.html#idc.get_operand_value
@@ -538,7 +584,7 @@ class Instruction:
     # print("self.disAsmStr=%s" % self.disAsmStr)
     self.name = name
     self.operands = operands
-  
+
   def __str__(self):
     # operandsAllStr = Operand.listToStr(self.operands)
     # print("operandsAllStr=%s" % operandsAllStr)
@@ -589,13 +635,11 @@ class Instruction:
     return parsedInst
 
   def isInst(self, instName):
-    if not self.name:
-      return False
-    else:
+    isMatchInst = False
+    if self.name:
       if (instName.lower() == self.name.lower()):
-        return True
-      else:
-        return False   
+        isMatchInst = True
+    return isMatchInst
 
   @property
   def contentStr(self):
@@ -631,6 +675,16 @@ class Instruction:
   def isRet(self):
     return self.isInst("RET")
 
+  def isB(self):
+    return self.isInst("B")
+
+  def isBr(self):
+    return self.isInst("BR")
+
+  def isBranch(self):
+    # TODO: support more: BRAA / ...
+    return self.isB() or self.isBr()
+
   def isAdd(self):
     return self.isInst("ADD")
 
@@ -647,6 +701,22 @@ class Instruction:
 # Current Project Functions
 ################################################################################
 
+def isFuncSizeValid(funcSize):
+  # note: not include invalid size: 0
+  return (funcSize > 0) and (funcSize <= MAX_INSTRUCTION_SIZE)
+
+def isAllMovInst(instructionList):
+  """
+  Check is all MOV/FMOV instruction
+  """
+  isAllMov = True
+  for eachInst in instructionList:
+    isMovLikeInst = eachInst.isMov() or eachInst.isFmov()
+    if not isMovLikeInst:
+      isAllMov = False
+      break
+  return isAllMov
+
 def checkAllMovThenRet(instructionList):
   isAllMovThenRet = False
 
@@ -658,29 +728,33 @@ def checkAllMovThenRet(instructionList):
     instListExceptLast = instructionList[:-1]
     # print("instListExceptLast=%s" % instListExceptLast)
     # print("instListExceptLast=%s" % Instruction.listToStr(instListExceptLast))
-
-    isAllMov = True
-    for eachInst in instListExceptLast:
-      isMovLikeInst = eachInst.isMov() or eachInst.isFmov()
-      if not isMovLikeInst:
-        isAllMov = False
-        break
-    # print("isAllMov=%s" % isAllMov)
+    isAllMov = isAllMovInst(instListExceptLast)
+    print("isAllMov=%s" % isAllMov)
     isAllMovThenRet = lastIsRet and isAllMov
 
   # print("isAllMovThenRet=%s" % isAllMovThenRet)
   return isAllMovThenRet
 
-def isFuncSizeValid(funcSize):
-  # note: not include invalid size: 0
-  return (funcSize > 0) and (funcSize <= MAX_INSTRUCTION_SIZE)
+def checkAllMovThenBranch(instructionList):
+  isAllMovThenBranch = False
+
+  lastInst = instructionList[-1]
+  # print("lastInst=%s" % lastInst)
+  lastIsBranch = lastInst.isBranch()
+  # print("lastIsBranch=%s" % lastIsBranch)
+  if lastIsBranch:
+    instListExceptLast = instructionList[:-1]
+    # print("instListExceptLast=%s" % instListExceptLast)
+    isAllMov = isAllMovInst(instListExceptLast)
+    # print("isAllMov=%s" % isAllMov)
+    isAllMovThenBranch = lastIsBranch and isAllMov
+
+  # print("isAllMovThenBranch=%s" % isAllMovThenBranch)
+  return isAllMovThenBranch
 
 def isNeedProcessFunc(curFuncAddr):
   isNeedProcess = False
-  curFuncName  = ida_getFunctionName(curFuncAddr)
-  # print("curFuncName=%s" % curFuncName)
-  isDefaultSubFunc = re.match("^sub_[0-9A-Za-z]+$", curFuncName)
-  # print("isDefaultSubFunc=%s" % isDefaultSubFunc)
+  isDefaultSubFunc, funcName = isDefaultSubFunction(curFuncAddr)
   if isDefaultSubFunc:
     curFuncSize = ida_getFunctionSize(curFuncAddr)
     # print("curFuncSize=%s" % curFuncSize)
@@ -690,6 +764,78 @@ def isNeedProcessFunc(curFuncAddr):
   
   return isNeedProcess
 
+def generateInstContentListStr(instructionList, isFirstDigitAddPrefix=True):
+  # print("instructionList=%s, isFirstDigitAddPrefix=%s" % (instructionList, isFirstDigitAddPrefix))
+  # print("instructionList=%s, isFirstDigitAddPrefix=%s" % (Instruction.listToStr(instructionList), isFirstDigitAddPrefix))
+
+  instContentStrList = []
+  for eachInst in instructionList:
+    eachInstContentStr = eachInst.contentStr
+    # print("eachInstContentStr=%s" % eachInstContentStr)
+    instContentStrList.append(eachInstContentStr)
+
+  allInstContentStr = "_".join(instContentStrList)
+  # print("allInstContentStr=%s" % allInstContentStr)
+
+  prefixStr = ""
+  if isFirstDigitAddPrefix:
+    isFisrtIsDigit = re.match("^\d+", allInstContentStr)
+    # print("isFisrtIsDigit=%s" % isFisrtIsDigit)
+    if isFisrtIsDigit:
+      prefixStr = "func_"
+
+  allInstContentStr = "%s%s" % (prefixStr, allInstContentStr)
+  # print("allInstContentStr=%s" % allInstContentStr)
+
+  return allInstContentStr
+
+def generateBranchName(branchInst):
+  branchInstName = branchInst.name
+  # print("branchInstName=%s" % branchInstName)
+  branchInstOperands = branchInst.operands
+  # print("branchInstOperands=%s" % branchInstOperands)
+  targetOperand = branchInstOperands[0]
+  # print("targetOperand=%s" % targetOperand)
+  # targetOperand=<Operand: op=_objc_msgSend$initWithName_protocolString_,type=7,val=0xF9DDC0>
+  # branchFunc = targetOperand.value
+  branchFunc = targetOperand.operand
+  # print("branchFunc=%s" % branchFunc)
+  branchType = targetOperand.type
+  # print("branchType=%s" % branchType)
+  if branchType == Operand.o_reg:
+    # BR X27
+    # branchFunc = "Jump%s" % branchFunc
+    branchFunc = "%s%s" % (branchInstName, branchFunc)
+  else:
+    isDefSubFunc, subAddrStr = isDefaultSubFuncName(branchFunc)
+    # print("isDefSubFunc=%s, subAddrStr=%s" % (isDefSubFunc, subAddrStr))
+    isReserved_loc, locAddrStr = isReservedPrefix_loc(branchFunc)
+    # print("isReserved_loc=%s, locAddrStr=%s" % (isReserved_loc, locAddrStr))
+    if isDefSubFunc:
+      # TODO: add support sub_XXX
+      print("TODO: add support for jump to %s" % branchFunc)
+      branchFunc = None
+    elif isReserved_loc:
+      # branchFunc = None
+      branchFunc = "JmpLoc%s" % locAddrStr
+    else:
+      # _calloc_2EA8
+      # _objc_msgSend
+      # _objc_release
+      # _objc_storeStrong_39D0
+      # objc_msgSend$initWithName_protocolString_
+      # _objc_msgSend$addObject__AB00
+      # remove leading _
+      branchFunc = re.sub("^_+", "", branchFunc)
+      # print("branchFunc=%s" % branchFunc)
+      # remove ending _
+      branchFunc = re.sub("_+$", "", branchFunc)
+      # print("branchFunc=%s" % branchFunc)
+      # remove last 4 or allAddr part if exist (previous self manual added)
+      branchFunc = re.sub("_+[0-9A-Fa-f]{3,20}$", "", branchFunc)
+  # print("branchFunc=%s" % branchFunc)
+  return branchFunc
+
 
 ################################################################################
 # Main
@@ -697,6 +843,9 @@ def isNeedProcessFunc(curFuncAddr):
 
 idaVersion = idaapi.IDA_SDK_VERSION
 print("IDA Version: %s" % idaVersion)
+
+curBinFilename = ida_nalt.get_root_filename()
+print("curBinFilename=%s" % curBinFilename)
 
 if isExportResult:
   curDateTimeStr = getCurDatetimeStr()
@@ -706,22 +855,31 @@ if isExportResult:
     outputFolder = ida_getCurrentFolder()
     print("outputFolder=%s" % outputFolder)
 
-# # for debug
-# # toProcessFuncAddrList = [0x10235F980, 0x1023A2534, 0x1023A255C, 0x10235F998]
-# # toProcessFuncAddrList = [0x1023A2578]
-# # toProcessFuncAddrList = [0x3B4E28]
-# # toProcessFuncAddrList = [0x3B4EC4, 0x3B4ED4, 0x3B5068, 0x3B7140, 0x3B9978]
-# # toProcessFuncAddrList = [0x4C491C, 0x4C499C, 0x4C49E0, 0x4C49D4]
-# # toProcessFuncAddrList = [0x4C49C4, 0x4C5E0C, 0x4C5E00, 0x4C7E0C, 0x4C7FB8]
-# # toProcessFuncAddrList = [0x4C800C, 0x4C8038]
+# # # for debug
+# # ---------- allMovThenRet ----------
+# # # toProcessFuncAddrList = [0x10235F980, 0x1023A2534, 0x1023A255C, 0x10235F998]
+# # # toProcessFuncAddrList = [0x1023A2578]
+# # # toProcessFuncAddrList = [0x3B4E28]
+# # # toProcessFuncAddrList = [0x3B4EC4, 0x3B4ED4, 0x3B5068, 0x3B7140, 0x3B9978]
+# # # toProcessFuncAddrList = [0x4C491C, 0x4C499C, 0x4C49E0, 0x4C49D4]
+# # # toProcessFuncAddrList = [0x4C49C4, 0x4C5E0C, 0x4C5E00, 0x4C7E0C, 0x4C7FB8]
+# # # toProcessFuncAddrList = [0x4C800C, 0x4C8038]
 # # toProcessFuncAddrList = [0x4C9D34, 0x4C9D50, 0x4D0550]
-# toProcessFuncAddrList = [0xF147B0]
+# # toProcessFuncAddrList = [0xF147B0]
+# # ---------- allMovThenBranch ----------
+# toProcessFuncAddrList = [
+#   # 0x3B4E18, 0xF0B15C, 0xF0CB44, 0xF33348,
+#   0xF332C0, 0xF0AED4, 0xF0BE60, 0xF147DC, 0xF0AEB0, 0xF0AF04, 0xD3F9F4,  
+# ]# SharedModules
+# # toProcessFuncAddrList = [0x10235C798, 0x10235C6B0, 0x10235D56C, 0x10163D5C4, 0x10163D5D8, 0x10163D5E0] # WhatsApp
+# toProcessFuncAddrList = [0x100006A00, 0x100046B88, 0x1001A99FC, 0x1004039EC] # WhatsApp
+# toProcessFuncAddrList = [0xF0AED4] # SharedModules
 # allFuncAddrList = toProcessFuncAddrList
 
+# normal code
 allFuncAddrList = ida_getFunctionAddrList()
 allFuncAddrListNum = len(allFuncAddrList)
 print("allFuncAddrListNum=%d" % allFuncAddrListNum)
-
 toProcessFuncAddrList = []
 for eachFuncAddr in allFuncAddrList:
   isNeedProcess = isNeedProcessFunc(eachFuncAddr)
@@ -739,7 +897,7 @@ renameFailNum = 0
 if isExportResult:
   renameDict = {}
   renameOkList_allMovThenRet = []
-  renameOkList_allMovThenB = []
+  renameOkList_allMovThenBranch = []
   renameOkList_prologue = []
   renameFailList = []
 
@@ -758,7 +916,11 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
   if isVerbose:
     print("funcName=%s, funcSize=%d=0x%X, funcEndAddr=0x%X" % (funcName, funcSize, funcSize, funcEndAddr))
 
+  isMatchSomePattern = False
+
   isAllMovThenRet = False
+  isAllMovThenBranch = False
+  isPrologue = False
 
   disAsmInstList = []
   for curFuncAddr in range(funcAddr, funcEndAddr, SINGLE_INSTRUCTION_SIZE):
@@ -769,81 +931,112 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
     #   print("newInst=%s" % newInst)
     disAsmInstList.append(newInst)
 
-  isAllMovThenRet = checkAllMovThenRet(disAsmInstList)
   if isVerbose:
-    print("isAllMovThenRet=%s" % isAllMovThenRet)
+    instDisasmStrList = Instruction.listToStr(disAsmInstList)
+    print("instDisasmStrList=%s" % instDisasmStrList)
 
-  if isAllMovThenRet:
-    instListExceptLast = disAsmInstList[0:-1]
-    instContentStrList = []
-    for eachInst in instListExceptLast:
-      eachInstContentStr = eachInst.contentStr
-      # print("eachInstContentStr=%s" % eachInstContentStr)
-      instContentStrList.append(eachInstContentStr)
-    
+  if not isMatchSomePattern:
+    isAllMovThenRet = checkAllMovThenRet(disAsmInstList)
     if isVerbose:
-      instDisasmStrList = Instruction.listToStr(disAsmInstList)
-      print("instDisasmStrList=%s" % instDisasmStrList)
+      print("isAllMovThenRet=%s" % isAllMovThenRet)
+    if isAllMovThenRet:
+      isMatchSomePattern = True
 
-    allAddrStr = "%X" % funcAddr
-    # print("allAddrStr=%s" % allAddrStr)
-    addrLast4Str = allAddrStr[-4:]
-    # print("addrLast4Str=%s" % addrLast4Str)
+  if not isMatchSomePattern:
+    isAllMovThenBranch = checkAllMovThenBranch(disAsmInstList)
+    if isVerbose:
+      print("isAllMovThenBranch=%s" % isAllMovThenBranch)
+    if isAllMovThenBranch:
+      isMatchSomePattern = True
 
-    funcContentStr = "_".join(instContentStrList)
-    # print("funcContentStr=%s" % funcContentStr)
+  funcNamePrevPart = None
+  newFuncName = None
+  retryFuncName = None
 
-    prefixStr = ""
-    isFisrtIsDigit = re.match("^\d+", funcContentStr)
-    # print("isFisrtIsDigit=%s" % isFisrtIsDigit)
-    if isFisrtIsDigit:
-      prefixStr = "func_"
+  # print("isMatchSomePattern=%s" % isMatchSomePattern)
+  if isMatchSomePattern:
+    instListExceptLast = disAsmInstList[0:-1]
+    # print("instListExceptLast=%s" % instListExceptLast)
 
-    funcNamePrevPart = "%s%s" % (prefixStr, funcContentStr)
+    if isAllMovThenRet:
+      prevPartContentStr = generateInstContentListStr(instListExceptLast)
+      # print("prevPartContentStr=%s" % prevPartContentStr)
+      funcNamePrevPart = prevPartContentStr
+
+    if isAllMovThenBranch:
+      prevPartContentStr = generateInstContentListStr(instListExceptLast, isFirstDigitAddPrefix=False)
+      # print("prevPartContentStr=%s" % prevPartContentStr)
+
+      branchInst = disAsmInstList[-1]
+      # print("branchInst=%s" % branchInst)
+
+      branchName = generateBranchName(branchInst)
+      # print("branchInst=%s" % branchInst)
+
+      if branchName:
+        funcNamePrevPart = "%s_%s" % (branchName, prevPartContentStr)
+
     # print("funcNamePrevPart=%s" % funcNamePrevPart)
+    if funcNamePrevPart:
+      funcAllAddrStr = "%X" % funcAddr
+      # print("funcAllAddrStr=%s" % funcAllAddrStr)
+      addrLast4Str = funcAllAddrStr[-4:]
+      # print("addrLast4Str=%s" % addrLast4Str)
 
-    newFuncName = "%s_%s" % (funcNamePrevPart, addrLast4Str)
-    # print("newFuncName=%s" % newFuncName)
-    retryFuncName = "%s_%s" % (funcNamePrevPart, allAddrStr)
-    # print("retryFuncName=%s" % retryFuncName)
+      newFuncName = "%s_%s" % (funcNamePrevPart, addrLast4Str)
+      retryFuncName = "%s_%s" % (funcNamePrevPart, funcAllAddrStr)
+      # print("newFuncName=%s, retryFuncName=%s" % (newFuncName, retryFuncName))
+    else:
+      newFuncName = None
+      retryFuncName = None
 
-    # for debug
+    # # for debug
     # print("Test to rename: [0x%X] %s, %s" % (funcAddr, newFuncName, retryFuncName))
 
-    toRenameNum += 1
-    isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
-    if isVerbose:
-      print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
-    if isRenameOk:
-      renameOkNum += 1
-      print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
-      if isExportResult:
-        renameOkDict_allMovThenRet = {
-          "address": funcAddrStr,
-          "oldName": funcName,
-          "newName": renamedName,
-        }
-        renameOkList_allMovThenRet.append(renameOkDict_allMovThenRet)
-    else:
-      print("! rename fail for [0x%X] %s -> %s or %s" % (funcAddr, funcName, renamedName, retryFuncName))
-      renameFailNum += 1
-      if isExportResult:
-        renameFailDict = {
-          "address": funcAddrStr,
-          "oldName": funcName,
-          "newName": newFuncName,
-          "retryName": retryFuncName,
-        }
-        renameFailList.append(renameFailDict)
-  # else:
-  #   print("Unsupport [0x%X] %s" % (funcAddr, Instruction.listToStr(disAsmInstList)))
+    if newFuncName:
+      toRenameNum += 1
+      isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
+      if isVerbose:
+        print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
+      if isRenameOk:
+        renameOkNum += 1
+        print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
+        if isExportResult:
+          reamedOkItemDict = {
+              "address": funcAddrStr,
+              "oldName": funcName,
+              "newName": renamedName,
+            }
+
+          if isAllMovThenRet:
+            renameOkList_allMovThenRet.append(reamedOkItemDict)
+          
+          if isAllMovThenBranch:
+            renameOkList_allMovThenBranch.append(reamedOkItemDict)
+
+          if isPrologue:
+            renameOkList_prologue.append(reamedOkItemDict)
+      else:
+        print("! rename fail for [0x%X] %s -> %s or %s" % (funcAddr, funcName, renamedName, retryFuncName))
+        renameFailNum += 1
+        if isExportResult:
+          renameFailDict = {
+            "address": funcAddrStr,
+            "oldName": funcName,
+            "newName": newFuncName,
+            "retryName": retryFuncName,
+          }
+          renameFailList.append(renameFailDict)
 
 logMain("Summary Info")
 print("Total Functions num: %d" % len(allFuncAddrList))
 print("To process function num: %d" % toProcessFuncAddrListNum)
 print("To rename function num: %d" % toRenameNum)
-print("  rename OK   num: %d" % renameOkNum)
-print("  rename fail num: %d" % renameFailNum)
+print("  OK num: %d" % renameOkNum)
+print("    allMovThenRet: %d" % len(renameOkList_allMovThenRet))
+print("    allMovThenBranch: %d" % len(renameOkList_allMovThenBranch))
+print("    prologue: %d" % len(renameOkList_prologue))
+print("  fail num: %d" % renameFailNum)
 
 if isExportResult:
   logMain("Export result to file")
@@ -851,13 +1044,14 @@ if isExportResult:
   renameDict = {
     "ok": {
       "allMovThenRet": renameOkList_allMovThenRet,
-      "allMovThenB": renameOkList_allMovThenB,
+      "allMovThenBranch": renameOkList_allMovThenBranch,
       "prologue": renameOkList_prologue,
     },
     "fail": renameFailList,
   }
 
-  outputFilename = "IDA_renamedResult_%s.json" % curDateTimeStr
+  # outputFilename = "IDA_renamedResult_%s.json" % curDateTimeStr
+  outputFilename = "%s_IdaRenamedResult_%s.json" % (curBinFilename, curDateTimeStr)
   # print("outputFilename=%s" % outputFilename)
   outputFullPath = os.path.join(outputFolder, outputFilename)
   # print("outputFullPath=%s" % outputFullPath)
