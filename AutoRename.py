@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20231214
+# Update: 20231215
 
 import re
 import os
@@ -31,14 +31,33 @@ isVerbose = False
 isExportResult = True
 
 if isExportResult:
-  # outputFolder = None
-  outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
+  outputFolder = None
+  # outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
 
 SINGLE_INSTRUCTION_SIZE = 4 # bytes
 # for rename, the max number of instruction to support
 # MAX_INSTRUCTION_NUM = 6
 MAX_INSTRUCTION_NUM = 8
 MAX_INSTRUCTION_SIZE = MAX_INSTRUCTION_NUM * SINGLE_INSTRUCTION_SIZE
+
+
+PrologueEpilogueRegList = [
+  "X19",
+  "X20",
+  "X21",
+  "X22",
+  "X23",
+  "X24",
+  "X25",
+  "X26",
+  "X27",
+  "X28",
+  "X29",
+  "X30",
+
+  "D8",
+  "D9",
+]
 
 ################################################################################
 # Util Function
@@ -694,6 +713,12 @@ class Instruction:
   def isStr(self):
     return self.isInst("STR")
 
+  def isStp(self):
+    return self.isInst("STP")
+
+  def isLdp(self):
+    return self.isInst("LDP")
+
   def isLdr(self):
     return self.isInst("LDR")
 
@@ -716,6 +741,75 @@ def isAllMovInst(instructionList):
       isAllMov = False
       break
   return isAllMov
+
+def isPrologueEpilogueReg(regName):
+  """
+  Check is Prologue/Epilogue register
+  eg:
+    "X28" -> True
+    "D8" -> True
+  """
+  # print("regName=%s" % regName)
+  regNameUpper = regName.upper()
+  # print("regNameUpper=%s" % regNameUpper)
+  isPrlgEplg = regNameUpper in PrologueEpilogueRegList
+  # print("isPrlgEplg=%s" % isPrlgEplg)
+  return isPrlgEplg
+
+def isPrologueEpilogueOperand(curOperand):
+  """
+  Check is Prologue/Epilogue Operand
+  eg:
+    <Operand: op=X28,type=1,val=0x9D> -> True
+  """
+  isPrlgEplgOp = False
+  opIsReg = curOperand.isReg()
+  # print("opIsReg=%s" % opIsReg)
+  if opIsReg:
+    regName = curOperand.operand
+    # print("regName=%s" % regName)
+    isPrlgEplgOp = isPrologueEpilogueReg(regName)
+
+  # print("isPrlgEplgOp=%s" % isPrlgEplgOp)
+  return isPrlgEplgOp
+
+def isAllPrologueStp(instructionList):
+  """
+  Check is all STP instruction of prologue
+  eg:
+    STP X28, X27, [SP,#arg_70]
+  """
+  isAllPrlgStp = True
+  for eachInst in instructionList:
+    # print("eachInst=%s" % eachInst)
+    isStp = eachInst.isStp()
+    if isStp:
+      # check operand register match or not
+      curOperands = eachInst.operands
+      # print("curOperands=%s" % curOperands)
+      operandNum = len(curOperands)
+      # print("operandNum=%s" % operandNum)
+      if operandNum == 3:
+        operand1 = curOperands[0]
+        operand2 = curOperands[1]
+        # print("operand1=%s, operand2=%s" % (operand1, operand2))
+  
+        # # for debug
+        # operand3 = curOperands[2]
+        # print("operand3=%s" % operand3)
+  
+        op1IsPrlgEplg = isPrologueEpilogueOperand(operand1)
+        op2IsPrlgEplg = isPrologueEpilogueOperand(operand2)
+        # print("op1IsPrlgEplg=%s, op2IsPrlgEplg=%s" % (op1IsPrlgEplg, op2IsPrlgEplg))
+        isAllPrlgStp = op1IsPrlgEplg and op2IsPrlgEplg
+      else:
+        isAllPrlgStp = False  
+    else:
+      isAllPrlgStp = False
+      break
+
+  # print("isAllPrlgStp=%s" % isAllPrlgStp)
+  return isAllPrlgStp
 
 def checkAllMovThenRet(instructionList):
   isAllMovThenRet = False
@@ -751,6 +845,23 @@ def checkAllMovThenBranch(instructionList):
 
   # print("isAllMovThenBranch=%s" % isAllMovThenBranch)
   return isAllMovThenBranch
+
+def checkPrologue(instructionList):
+  isPrologue = False
+
+  lastInst = instructionList[-1]
+  # print("lastInst=%s" % lastInst)
+  lastIsRet = lastInst.isRet()
+  # print("lastIsRet=%s" % lastIsRet)
+  if lastIsRet:
+    instListExceptLast = instructionList[:-1]
+    # print("instListExceptLast=%s" % instListExceptLast)
+    isAllStp = isAllPrologueStp(instListExceptLast)
+    # print("isAllStp=%s" % isAllStp)
+    isPrologue = lastIsRet and isAllStp
+
+  # print("isPrologue=%s" % isPrologue)
+  return isPrologue
 
 def isNeedProcessFunc(curFuncAddr):
   isNeedProcess = False
@@ -874,6 +985,8 @@ if isExportResult:
 # # toProcessFuncAddrList = [0x10235C798, 0x10235C6B0, 0x10235D56C, 0x10163D5C4, 0x10163D5D8, 0x10163D5E0] # WhatsApp
 # toProcessFuncAddrList = [0x100006A00, 0x100046B88, 0x1001A99FC, 0x1004039EC] # WhatsApp
 # toProcessFuncAddrList = [0xF0AED4] # SharedModules
+# toProcessFuncAddrList = [0x10235D3C0, 0x10235D3A8, 0x10235D390, 0x10235D374] # WhatsApp
+# toProcessFuncAddrList = [0xF0C694, 0xF0CA08, 0xF0CA3C] # SharedModules
 # allFuncAddrList = toProcessFuncAddrList
 
 # normal code
@@ -936,6 +1049,13 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
     print("instDisasmStrList=%s" % instDisasmStrList)
 
   if not isMatchSomePattern:
+    isPrologue = checkPrologue(disAsmInstList)
+    if isVerbose:
+      print("isPrologue=%s" % isPrologue)
+    if isPrologue:
+      isMatchSomePattern = True
+
+  if not isMatchSomePattern:
     isAllMovThenRet = checkAllMovThenRet(disAsmInstList)
     if isVerbose:
       print("isAllMovThenRet=%s" % isAllMovThenRet)
@@ -958,6 +1078,9 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
     instListExceptLast = disAsmInstList[0:-1]
     # print("instListExceptLast=%s" % instListExceptLast)
 
+    if isPrologue:
+      funcNamePrevPart = "prologue"
+
     if isAllMovThenRet:
       prevPartContentStr = generateInstContentListStr(instListExceptLast)
       # print("prevPartContentStr=%s" % prevPartContentStr)
@@ -976,16 +1099,24 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
       if branchName:
         funcNamePrevPart = "%s_%s" % (branchName, prevPartContentStr)
 
-    # print("funcNamePrevPart=%s" % funcNamePrevPart)
+    if isVerbose:
+      print("funcNamePrevPart=%s" % funcNamePrevPart)
+
     if funcNamePrevPart:
       funcAllAddrStr = "%X" % funcAddr
       # print("funcAllAddrStr=%s" % funcAllAddrStr)
       addrLast4Str = funcAllAddrStr[-4:]
       # print("addrLast4Str=%s" % addrLast4Str)
 
-      newFuncName = "%s_%s" % (funcNamePrevPart, addrLast4Str)
-      retryFuncName = "%s_%s" % (funcNamePrevPart, funcAllAddrStr)
-      # print("newFuncName=%s, retryFuncName=%s" % (newFuncName, retryFuncName))
+      if isPrologue:
+        newFuncName = "%s_%s" % (funcNamePrevPart, funcAllAddrStr)
+        retryFuncName = None
+      else:
+        newFuncName = "%s_%s" % (funcNamePrevPart, addrLast4Str)
+        retryFuncName = "%s_%s" % (funcNamePrevPart, funcAllAddrStr)
+
+      if isVerbose:
+        print("newFuncName=%s, retryFuncName=%s" % (newFuncName, retryFuncName))
     else:
       newFuncName = None
       retryFuncName = None
