@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20231215
+# Update: 20231217
 
 import re
 import os
@@ -31,8 +31,8 @@ isVerbose = False
 isExportResult = True
 
 if isExportResult:
-  outputFolder = None
-  # outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
+  # outputFolder = None
+  outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
 
 SINGLE_INSTRUCTION_SIZE = 4 # bytes
 # for rename, the max number of instruction to support
@@ -57,6 +57,20 @@ PrologueEpilogueRegList = [
 
   "D8",
   "D9",
+]
+
+ArmSpecialRegNameList = [
+  "SB",
+  "TR",
+  "XR",
+  "IP",
+  "IP0",
+  "IP1",
+  "PR",
+  "SP",
+  "FP",
+  "LR",
+  "PC",
 ]
 
 ################################################################################
@@ -533,11 +547,54 @@ class Operand:
   def isImm(self):
     return self.type == Operand.o_imm
 
+  def isIdpspec0(self):
+    #   o_idpspec0 = 8        # Processor specific type
+    return self.type == Operand.o_idpspec0
+
   def isValid(self):
+    # print("self.operand: type=%s, op=%s" % (type(self.operand), self.operand))
     isValidOperand = bool(self.operand)
-    isValidType = self.type != Operand.o_void
-    isValidValue = self.value >= 0
-    isValidAll = isValidOperand and isValidType and isValidValue
+    if isValidOperand:
+      if self.isImm():
+        # #0x20200A2C
+        # #0x2020
+        # #arg_20
+        # isMatchImm = re.match("^#[0-9a-fA-FxX]+$", self.operand)
+        isMatchImm = re.match("^#\w+$", self.operand)
+        # print("isMatchImm=%s" % isMatchImm)
+        isValidOperand = bool(isMatchImm)
+        # print("isValidOperand=%s" % isValidOperand)
+      elif self.isReg():
+        # X0
+        # D8
+        regNameUpper = self.operand.upper()
+        # print("regNameUpper=%s" % regNameUpper)
+        # isMatchReg = re.match("^[XD]\d+$", regNameUpper)
+        isMatchReg = re.match("^[XDW]\d+$", regNameUpper)
+        # print("isMatchReg=%s" % isMatchReg)
+        isValidOperand = bool(isMatchReg)
+        # print("isValidOperand=%s" % isValidOperand)
+        if not isValidOperand:
+          isValidOperand = regNameUpper in ArmSpecialRegNameList
+
+    # print("isValidOperand=%s" % isValidOperand)
+
+    # isValidType = self.type != Operand.o_void
+    # isValidValue = self.value >= 0
+    # isValidAll = isValidOperand and isValidType and isValidValue
+    # isValidTypeValue = False
+    # if self.isReg() or self.isImm():
+    #   isValidTypeValue = self.value >= 0
+    # elif self.isIdpspec0():
+    #   isValidTypeValue = self.value == -1
+    if self.isIdpspec0():
+      isValidTypeValue = self.value == -1
+    else:
+      isValidType = self.type != Operand.o_void
+      isValidValue = self.value >= 0
+      isValidTypeValue = isValidType and isValidValue
+    isValidAll = isValidOperand and isValidTypeValue
+    # print("Operand isValidAll=%s" % isValidAll)
     return isValidAll
 
   def isInvalid(self):
@@ -575,11 +632,20 @@ class Operand:
     elif self.isImm():
       # print("isImm")
       # if 0 == self.immVal:
+      # for 0 <= x < 8, not add 0x prefix, eg: 0x7 -> 7
       if (self.immVal >= 0) and (self.immVal < 8):
         # contentStr = "0"
         contentStr = "%X" % self.immVal
       else:
         contentStr = self.immValHex
+    elif self.isIdpspec0():
+        contentStr = self.operand
+        # <Operand: op=W0,UXTB,type=8,val=-1>
+        # W0,UXTB -> W0UXTB
+        contentStr = contentStr.replace(",", "")
+        # X21,LSL#32
+        # X8,ASR#29
+        contentStr = contentStr.replace("#", "")
     # print("contentStr=%s" % contentStr)
     # TODO: add more case
     return contentStr
@@ -622,35 +688,52 @@ class Instruction:
 
   @staticmethod
   def parse(addr):
+    isDebug = False
+    # # if addr == 0x10235D610:
+    # if addr == 0x1002B8340:
+    #   isDebug = True
+
+    if isDebug:
+      print("Instruction: parsing 0x%X" % addr)
     parsedInst = None
 
     instName = idc.print_insn_mnem(addr)
-    # print("instName=%s" % instName)
+    if isDebug:
+      print("instName=%s" % instName)
 
     curOperandIdx = 0
     curOperandVaild = True
     operandList = []
     while curOperandVaild:
-      # logSub("[%d]" % curOperandIdx)
+      if isDebug:
+        logSub("[%d]" % curOperandIdx)
       curOperand = idc.print_operand(addr, curOperandIdx)
-      # print("curOperand=%s" % curOperand)
+      if isDebug:
+        print("curOperand=%s" % curOperand)
       curOperandType = idc.get_operand_type(addr, curOperandIdx)
-      # print("curOperandType=%d" % curOperandType)
+      if isDebug:
+        print("curOperandType=%d" % curOperandType)
       curOperandValue = idc.get_operand_value(addr, curOperandIdx)
-      # print("curOperandValue=%s=0x%X" % (curOperandValue, curOperandValue))
+      if isDebug:
+        print("curOperandValue=%s=0x%X" % (curOperandValue, curOperandValue))
       curOperand = Operand(curOperand, curOperandType, curOperandValue)
-      # print("curOperand=%s" % curOperand)
+      if isDebug:
+        print("curOperand=%s" % curOperand)
       if curOperand.isValid():
         operandList.append(curOperand)
       else:
-        # print("End of operand for invalid %s" % curOperand)
+        if isDebug:
+          print("End of operand for invalid %s" % curOperand)
         curOperandVaild = False
 
-      # print("curOperandVaild=%s" % curOperandVaild)
+      if isDebug:
+        print("curOperandVaild=%s" % curOperandVaild)
       curOperandIdx += 1
 
-    parsedInst = Instruction(addr=addr, name=instName, operands=operandList)
-    # print("parsedInst=%s" % parsedInst)
+    if operandList:
+      parsedInst = Instruction(addr=addr, name=instName, operands=operandList)
+    if isDebug:
+      print("parsedInst=%s" % parsedInst)
     return parsedInst
 
   def isInst(self, instName):
@@ -666,8 +749,10 @@ class Instruction:
     convert to meaningful string of Instruction real action / content
     """
     contentStr = ""
+    operandNum = len(self.operands)
+    # print("operandNum=%s" % operandNum)
     if self.isMov() or self.isFmov():
-      operandNum = len(self.operands)
+      #  MOV X0, X24
       if operandNum == 2:
         srcOperand = self.operands[1]
         # print("srcOperand=%s" % srcOperand)
@@ -679,9 +764,33 @@ class Instruction:
         # print("dstOperandStr=%s" % dstOperandStr)
         contentStr = "%sto%s" % (srcOperandStr, dstOperandStr)
 
-      # TODO: add case for operand > 2 
+      # TODO: add case for operand > 2
+    elif self.isAdd():
+      # <Instruction: 0x10235D574: ADD X0, X19, X8; location>
+      # print("is ADD: self=%s" % self)
+      instName = self.name
+      # print("instName=%s" % instName)
+      instOperandList = self.operands
+      # print("instOperandList=%s" % Operand.listToStr(instOperandList))
+      if operandNum == 3:
+        # <Instruction: 0x10235D574: ADD X0, X19, X8; location>
+        srcOperand = self.operands[1]
+        # print("srcOperand=%s" % srcOperand)
+        extracOperand = self.operands[2]
+        # print("extracOperand=%s" % extracOperand)
+        dstOperand = self.operands[0]
+        # print("dstOperand=%s" % dstOperand)
+        srcOperandStr = srcOperand.contentStr
+        # print("srcOperandStr=%s" % srcOperandStr)
+        extraOperandStr = extracOperand.contentStr
+        # print("extraOperandStr=%s" % extraOperandStr)
+        dstOperandStr = dstOperand.contentStr
+        # print("dstOperandStr=%s" % dstOperandStr)
+        contentStr = "%sadd%sto%s" % (srcOperandStr, extraOperandStr, dstOperandStr)
 
-    # TODO: add other Instruction support: ADD/SUB/LDR/STR/...
+      # TODO: add case operand == 2
+
+    # TODO: add other Instruction support: SUB/LDR/STR/...
     # print("contentStr=%s" % contentStr)
     return contentStr
 
@@ -821,7 +930,6 @@ def checkAllMovThenRet(instructionList):
   if lastIsRet:
     instListExceptLast = instructionList[:-1]
     # print("instListExceptLast=%s" % instListExceptLast)
-    # print("instListExceptLast=%s" % Instruction.listToStr(instListExceptLast))
     isAllMov = isAllMovInst(instListExceptLast)
     print("isAllMov=%s" % isAllMov)
     isAllMovThenRet = lastIsRet and isAllMov
@@ -901,6 +1009,10 @@ def generateInstContentListStr(instructionList, isFirstDigitAddPrefix=True):
   return allInstContentStr
 
 def generateBranchName(branchInst):
+  isSupport = True
+  branchFunc = None
+  errMsg = ""
+
   branchInstName = branchInst.name
   # print("branchInstName=%s" % branchInstName)
   branchInstOperands = branchInst.operands
@@ -923,9 +1035,11 @@ def generateBranchName(branchInst):
     isReserved_loc, locAddrStr = isReservedPrefix_loc(branchFunc)
     # print("isReserved_loc=%s, locAddrStr=%s" % (isReserved_loc, locAddrStr))
     if isDefSubFunc:
-      # TODO: add support sub_XXX
-      print("TODO: add support for jump to %s" % branchFunc)
+      isSupport = False
       branchFunc = None
+      defSubFuncName = "sub_%s" % subAddrStr
+      errMsg = "Current not support for jump to %s" % defSubFuncName
+      # TODO: add branch jump to sub_xxx
     elif isReserved_loc:
       # branchFunc = None
       branchFunc = "JmpLoc%s" % locAddrStr
@@ -944,8 +1058,34 @@ def generateBranchName(branchInst):
       # print("branchFunc=%s" % branchFunc)
       # remove last 4 or allAddr part if exist (previous self manual added)
       branchFunc = re.sub("_+[0-9A-Fa-f]{3,20}$", "", branchFunc)
-  # print("branchFunc=%s" % branchFunc)
-  return branchFunc
+  # print("isSupport=%s, branchFunc=%s, errMsg=%s" % (isSupport, branchFunc, errMsg))
+  return isSupport, branchFunc, errMsg
+
+
+def checkAndGenerateInstListContentStr(instructionList):
+  isSupportAllInst = True
+  instListContentStr = ""
+  firstUnsupportInst = None
+
+  instContentStrList = []
+  for eachInst in instructionList:
+    # print("eachInst=%s" % eachInst)
+    instContentStr = eachInst.contentStr
+    # print("instContentStr=%s" % instContentStr)
+    if instContentStr:
+      instContentStrList.append(instContentStr)
+    else:
+      isSupportAllInst = False
+      firstUnsupportInst = eachInst
+      # print("firstUnsupportInst=%s" % firstUnsupportInst)
+      break
+  
+  if isSupportAllInst:
+    instListContentStr = "_".join(instContentStrList)
+    # print("instListContentStr=%s" % instListContentStr)
+    return isSupportAllInst, instListContentStr
+  else:
+    return isSupportAllInst, firstUnsupportInst
 
 
 ################################################################################
@@ -987,6 +1127,11 @@ if isExportResult:
 # toProcessFuncAddrList = [0xF0AED4] # SharedModules
 # toProcessFuncAddrList = [0x10235D3C0, 0x10235D3A8, 0x10235D390, 0x10235D374] # WhatsApp
 # toProcessFuncAddrList = [0xF0C694, 0xF0CA08, 0xF0CA3C] # SharedModules
+# toProcessFuncAddrList = [0x10235D574, 0x10235D60C, 0x10235D6B4, 0x102475804, 0x1024757E4, 0x10247B4C0] # WhatsApp
+# toProcessFuncAddrList = [0x102475804] # WhatsApp
+# toProcessFuncAddrList = [0x10235D324, 0x10235D35C] # WhatsApp
+# toProcessFuncAddrList = [0x1002B8338] # WhatsApp
+# # toProcessFuncAddrList = [0xF2E54C, 0xF2E510, ] # SharedModules
 # allFuncAddrList = toProcessFuncAddrList
 
 # normal code
@@ -1009,9 +1154,8 @@ renameFailNum = 0
 
 if isExportResult:
   renameDict = {}
-  renameOkList_allMovThenRet = []
-  renameOkList_allMovThenBranch = []
-  renameOkList_prologue = []
+
+  renameOkList = []
   renameFailList = []
 
 for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
@@ -1029,155 +1173,146 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
   if isVerbose:
     print("funcName=%s, funcSize=%d=0x%X, funcEndAddr=0x%X" % (funcName, funcSize, funcSize, funcEndAddr))
 
-  isMatchSomePattern = False
+  # isMatchSomePattern = False
 
-  isAllMovThenRet = False
-  isAllMovThenBranch = False
-  isPrologue = False
+  # isAllMovThenRet = False
+  # isAllMovThenBranch = False
+  # isPrologue = False
+
+  funcNameMainPart = None
+  funcNamePrefix = ""
+  newFuncName = None
+  retryFuncName = None
+
+  allAddrStr = "%X" % funcAddr
+  # print("allAddrStr=%s" % allAddrStr)
+  last4AddrStr = allAddrStr[-4:]
+  # print("last4AddrStr=%s" % last4AddrStr)
 
   disAsmInstList = []
   for curFuncAddr in range(funcAddr, funcEndAddr, SINGLE_INSTRUCTION_SIZE):
     # if isVerbose:
     #   logSub("[0x%X]" % curFuncAddr)
     newInst = Instruction.parse(curFuncAddr)
-    # if isVerbose:
-    #   print("newInst=%s" % newInst)
-    disAsmInstList.append(newInst)
+    if isVerbose:
+      print("newInst=%s" % newInst)
+    if newInst:
+      disAsmInstList.append(newInst)
+    else:
+      print("Invalid/Unsupport instruction at 0x%X" % curFuncAddr)
 
   if isVerbose:
     instDisasmStrList = Instruction.listToStr(disAsmInstList)
     print("instDisasmStrList=%s" % instDisasmStrList)
 
-  if not isMatchSomePattern:
-    isPrologue = checkPrologue(disAsmInstList)
+  isPrologue = checkPrologue(disAsmInstList)
+  if isVerbose:
+    print("isPrologue=%s" % isPrologue)
+  if isPrologue:
+    funcNameMainPart = "prologue"
+    newFuncName = "%s_%s" % (funcNameMainPart, allAddrStr)
+    retryFuncName = None
+  
+  if not newFuncName:
+    lastInst = disAsmInstList[-1]
+    # print("lastInst=%s" % lastInst)
+    lastIsRet = lastInst.isRet()
+    # print("lastIsRet=%s" % lastIsRet)
+    lastIsBranch = lastInst.isBranch()
+    # print("lastIsBranch=%s" % lastIsBranch)
+    if lastIsRet:
+      funcNamePrefix = ""
+    elif lastIsBranch:
+      isSupport, branchFunc, errMsg = generateBranchName(lastInst)
+      if isSupport:
+        funcNamePrefix = branchFunc
+      else:
+        print("Omit [%s] for %s" % (funcAddrStr, errMsg))
+        continue
+    
     if isVerbose:
-      print("isPrologue=%s" % isPrologue)
-    if isPrologue:
-      isMatchSomePattern = True
+      print("funcNamePrefix=%s" % funcNamePrefix)
 
-  if not isMatchSomePattern:
-    isAllMovThenRet = checkAllMovThenRet(disAsmInstList)
-    if isVerbose:
-      print("isAllMovThenRet=%s" % isAllMovThenRet)
-    if isAllMovThenRet:
-      isMatchSomePattern = True
-
-  if not isMatchSomePattern:
-    isAllMovThenBranch = checkAllMovThenBranch(disAsmInstList)
-    if isVerbose:
-      print("isAllMovThenBranch=%s" % isAllMovThenBranch)
-    if isAllMovThenBranch:
-      isMatchSomePattern = True
-
-  funcNamePrevPart = None
-  newFuncName = None
-  retryFuncName = None
-
-  # print("isMatchSomePattern=%s" % isMatchSomePattern)
-  if isMatchSomePattern:
     instListExceptLast = disAsmInstList[0:-1]
-    # print("instListExceptLast=%s" % instListExceptLast)
+    if isVerbose:
+      # print("instListExceptLast=%s" % instListExceptLast)
+      print("instListExceptLast=%s" % Instruction.listToStr(instListExceptLast))
 
-    if isPrologue:
-      funcNamePrevPart = "prologue"
+    if instListExceptLast:
+      isAllInstSupport, retValue = checkAndGenerateInstListContentStr(instListExceptLast)
+      if isVerbose:
+        print("isAllInstSupport=%s, retValue=%s" % (isAllInstSupport, retValue))
 
-    if isAllMovThenRet:
-      prevPartContentStr = generateInstContentListStr(instListExceptLast)
-      # print("prevPartContentStr=%s" % prevPartContentStr)
-      funcNamePrevPart = prevPartContentStr
-
-    if isAllMovThenBranch:
-      prevPartContentStr = generateInstContentListStr(instListExceptLast, isFirstDigitAddPrefix=False)
-      # print("prevPartContentStr=%s" % prevPartContentStr)
-
-      branchInst = disAsmInstList[-1]
-      # print("branchInst=%s" % branchInst)
-
-      branchName = generateBranchName(branchInst)
-      # print("branchInst=%s" % branchInst)
-
-      if branchName:
-        funcNamePrevPart = "%s_%s" % (branchName, prevPartContentStr)
+      if isAllInstSupport:
+        instContentStr = retValue
+        if funcNamePrefix:
+          funcNameMainPart = "%s_%s" % (funcNamePrefix, instContentStr)
+        else:
+          funcNameMainPart = instContentStr
+      else:
+        firstUnsupportInst = retValue
+        print("Fist unsupported instruction: %s" % firstUnsupportInst)
+    else:
+      print("Only 1 instrunction")
+      funcNameMainPart = funcNamePrefix
 
     if isVerbose:
-      print("funcNamePrevPart=%s" % funcNamePrevPart)
-
-    if funcNamePrevPart:
-      funcAllAddrStr = "%X" % funcAddr
-      # print("funcAllAddrStr=%s" % funcAllAddrStr)
-      addrLast4Str = funcAllAddrStr[-4:]
-      # print("addrLast4Str=%s" % addrLast4Str)
-
-      if isPrologue:
-        newFuncName = "%s_%s" % (funcNamePrevPart, funcAllAddrStr)
-        retryFuncName = None
-      else:
-        newFuncName = "%s_%s" % (funcNamePrevPart, addrLast4Str)
-        retryFuncName = "%s_%s" % (funcNamePrevPart, funcAllAddrStr)
-
+      print("funcNameMainPart=%s" % funcNameMainPart)
+    if funcNameMainPart:
+      isFisrtIsDigit = re.match("^\d+", funcNameMainPart)
       if isVerbose:
-        print("newFuncName=%s, retryFuncName=%s" % (newFuncName, retryFuncName))
+        print("isFisrtIsDigit=%s" % isFisrtIsDigit)
+      if isFisrtIsDigit:
+        funcNameMainPart = "func_%s" % funcNameMainPart
+    if isVerbose:
+      print("funcNameMainPart=%s" % funcNameMainPart)
+
+    if funcNameMainPart:
+      newFuncName = "%s_%s" % (funcNameMainPart, last4AddrStr)
+      retryFuncName = "%s_%s" % (funcNameMainPart, allAddrStr)
+
+  # # for debug
+  # print("Test to rename: [0x%X] %s, %s" % (funcAddr, newFuncName, retryFuncName))
+
+  if newFuncName:
+    toRenameNum += 1
+    isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
+    if isVerbose:
+      print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
+    if isRenameOk:
+      renameOkNum += 1
+      print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
+      if isExportResult:
+        reamedOkItemDict = {
+          "address": funcAddrStr,
+          "oldName": funcName,
+          "newName": renamedName,
+        }
+        renameOkList.append(reamedOkItemDict)
     else:
-      newFuncName = None
-      retryFuncName = None
-
-    # # for debug
-    # print("Test to rename: [0x%X] %s, %s" % (funcAddr, newFuncName, retryFuncName))
-
-    if newFuncName:
-      toRenameNum += 1
-      isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
-      if isVerbose:
-        print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
-      if isRenameOk:
-        renameOkNum += 1
-        print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
-        if isExportResult:
-          reamedOkItemDict = {
-              "address": funcAddrStr,
-              "oldName": funcName,
-              "newName": renamedName,
-            }
-
-          if isAllMovThenRet:
-            renameOkList_allMovThenRet.append(reamedOkItemDict)
-          
-          if isAllMovThenBranch:
-            renameOkList_allMovThenBranch.append(reamedOkItemDict)
-
-          if isPrologue:
-            renameOkList_prologue.append(reamedOkItemDict)
-      else:
-        print("! rename fail for [0x%X] %s -> %s or %s" % (funcAddr, funcName, renamedName, retryFuncName))
-        renameFailNum += 1
-        if isExportResult:
-          renameFailDict = {
-            "address": funcAddrStr,
-            "oldName": funcName,
-            "newName": newFuncName,
-            "retryName": retryFuncName,
-          }
-          renameFailList.append(renameFailDict)
+      print("! rename fail for [0x%X] %s -> %s or %s" % (funcAddr, funcName, renamedName, retryFuncName))
+      renameFailNum += 1
+      if isExportResult:
+        renameFailDict = {
+          "address": funcAddrStr,
+          "oldName": funcName,
+          "newName": newFuncName,
+          "retryName": retryFuncName,
+        }
+        renameFailList.append(renameFailDict)
 
 logMain("Summary Info")
 print("Total Functions num: %d" % len(allFuncAddrList))
 print("To process function num: %d" % toProcessFuncAddrListNum)
 print("To rename function num: %d" % toRenameNum)
 print("  OK num: %d" % renameOkNum)
-print("    allMovThenRet: %d" % len(renameOkList_allMovThenRet))
-print("    allMovThenBranch: %d" % len(renameOkList_allMovThenBranch))
-print("    prologue: %d" % len(renameOkList_prologue))
 print("  fail num: %d" % renameFailNum)
 
 if isExportResult:
   logMain("Export result to file")
 
   renameDict = {
-    "ok": {
-      "allMovThenRet": renameOkList_allMovThenRet,
-      "allMovThenBranch": renameOkList_allMovThenBranch,
-      "prologue": renameOkList_prologue,
-    },
+    "ok": renameOkList,
     "fail": renameFailList,
   }
 
