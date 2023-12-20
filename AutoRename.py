@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20231217
+# Update: 20231220
 
 import re
 import os
@@ -25,6 +25,9 @@ import ida_segment
 # verbose log
 isVerbose = False
 # isVerbose = True
+
+# isFailForUnsupportInstruction = False
+isFailForUnsupportInstruction = True
 
 # export result to json file
 # isExportResult = False
@@ -431,14 +434,14 @@ def isDefaultSubFuncName(funcName):
     sub_F332C0 -> True, "F332C0"
   """
   isSub = False
-  addStr = None
+  addressStr = None
   # subMatch = re.match("^sub_[0-9A-Za-z]+$", funcName)
-  subMatch = re.match("^sub_(?P<addStr>[0-9A-Fa-f]+)$", funcName)
+  subMatch = re.match("^sub_(?P<addressStr>[0-9A-Fa-f]+)$", funcName)
   # print("subMatch=%s" % subMatch)
   if subMatch:
     isSub = True
-    addStr = subMatch.group("addStr")
-  return isSub, addStr
+    addressStr = subMatch.group("addressStr")
+  return isSub, addressStr
 
 def isReservedPrefix_loc(funcName):
   """
@@ -447,13 +450,13 @@ def isReservedPrefix_loc(funcName):
     loc_100007A2C -> True, "100007A2C"
   """
   isLoc = False
-  addStr = None
-  locMatch = re.match("^loc_(?P<addStr>[0-9A-Fa-f]+)$", funcName)
+  addressStr = None
+  locMatch = re.match("^loc_(?P<addressStr>[0-9A-Fa-f]+)$", funcName)
   # print("locMatch=%s" % locMatch)
   if locMatch:
     isLoc = True
-    addStr = locMatch.group("addStr")
-  return isLoc, addStr
+    addressStr = locMatch.group("addressStr")
+  return isLoc, addressStr
 
 def isDefaultSubFunction(curAddr):
   """
@@ -514,18 +517,67 @@ class Operand:
   o_dcr  =         o_idpspec5      # Device control register
 
 
+  # addStr = "add"
+  # addStr = "Add"
+  offStr = "Off" # Offset=Index
+  # valStr = "val"
+  valStr = "Val"
+
   def __init__(self, operand, type, value):
     self.operand = operand
     self.type = type
     self.value = value
 
+    # for o_displ / o_phrase
+    self.baseReg = None
+    self.indexReg = None
+    # for o_displ
+    self.displacement = None
+
+    self._postInit()
+  
+  def _postInit(self):
+    # print("_postInit")
+    if self.isDispl():
+      # o_displ    = 4        # Memory Reg [Base Reg + Index Reg + Displacement] phrase+addr
+      # [SP,#arg_18]
+      # [X20,#0x50]
+      # print("self.operand=%s" % self.operand)
+      # displMatch = re.search("\[(?P<baseReg>\w+),(?P<displacement>#[\w\-\.]+)\]", self.operand)
+      # [X9]
+      displMatch = re.search("\[(?P<baseReg>\w+)(,(?P<displacement>#[\w\-\.]+))?\]", self.operand)
+      # print("displMatch=%s" % displMatch)
+      if displMatch:
+        self.baseReg = displMatch.group("baseReg")
+        # print("self.baseReg=%s" % self.baseReg)
+        self.displacement = displMatch.group("displacement")
+        # print("self.displacement=%s" % self.displacement)
+    elif self.isPhrase():
+      # o_phrase   = 3        # Memory Ref [Base Reg + Index Reg]    phrase
+      # [X19,X8]
+      # print("self.operand=%s" % self.operand)
+      phraseMatch = re.search("\[(?P<baseReg>\w+),(?P<indexReg>\w+)\]", self.operand)
+      # print("phraseMatch=%s" % phraseMatch)
+      if phraseMatch:
+        self.baseReg = phraseMatch.group("baseReg")
+        # print("self.baseReg=%s" % self.baseReg)
+        self.indexReg = phraseMatch.group("indexReg")
+        # print("self.indexReg=%s" % self.indexReg)
+
   def __str__(self):
     valStr = ""
-    if self.value < 0:
+    if self.value <= 0:
       valStr = "%s" % self.value
     else:
       valStr = "0x%X" % self.value
-    curOpStr = "<Operand: op=%s,type=%d,val=%s>" % (self.operand, self.type, valStr)
+    # curOpStr = "<Operand: op=%s,type=%d,val=%s>" % (self.operand, self.type, valStr)
+    # curOpStr = "<Operand: op=%s,type=%d,val=%s, baseReg=%s,indexReg=%s,displ=%s>" % (self.operand, self.type, valStr, self.baseReg, self.indexReg, self.displacement)
+    extraInfo = ""
+    if self.isDispl():
+      extraInfo = ",bsReg=%s,idxReg=%s,displ=%s" % (self.baseReg, self.indexReg, self.displacement)
+    elif self.isPhrase():
+      extraInfo = ",bsReg=%s,idxReg=%s" % (self.baseReg, self.indexReg)
+    curOpStr = "<Operand: op=%s,type=%d,val=%s%s>" % (self.operand, self.type, valStr, extraInfo)
     # print("curOpStr=%s" % curOpStr)
     return curOpStr
 
@@ -533,7 +585,10 @@ class Operand:
   def listToStr(operandList):
     # operandStrList = []
     # for curOperand in operandList:
-    #   curOperandStr = "%s" % curOperand
+    #   if curOperand:
+    #     curOperandStr = "%s" % curOperand
+    #   else:
+    #     curOperandStr = ""
     #   # print("curOperandStr=%s" % curOperandStr)
     #   operandStrList.append(curOperandStr)
     operandStrList = [str(eachOperand) for eachOperand in operandList]
@@ -547,35 +602,61 @@ class Operand:
   def isImm(self):
     return self.type == Operand.o_imm
 
+  def isDispl(self):
+    return self.type == Operand.o_displ
+
+  def isPhrase(self):
+    return self.type == Operand.o_phrase
+
   def isIdpspec0(self):
     #   o_idpspec0 = 8        # Processor specific type
     return self.type == Operand.o_idpspec0
 
   def isValid(self):
     # print("self.operand: type=%s, op=%s" % (type(self.operand), self.operand))
-    isValidOperand = bool(self.operand)
-    if isValidOperand:
+    # isValidOperand = bool(self.operand)
+    # print("isValidOperand=%s" % isValidOperand)
+    # if isValidOperand:
+    isValidOperand = False
+    if self.operand:
       if self.isImm():
         # #0x20200A2C
         # #0x2020
         # #arg_20
         # isMatchImm = re.match("^#[0-9a-fA-FxX]+$", self.operand)
-        isMatchImm = re.match("^#\w+$", self.operand)
+        # #-3.0
+        # isMatchImm = re.match("^#\w+$", self.operand)
+        isMatchImm = re.match("^#[\w\-\.]+$", self.operand)
         # print("isMatchImm=%s" % isMatchImm)
         isValidOperand = bool(isMatchImm)
         # print("isValidOperand=%s" % isValidOperand)
       elif self.isReg():
-        # X0
-        # D8
+        # X0/X1
+        # D8/D4
+        # Special: XZR/WZR
         regNameUpper = self.operand.upper()
         # print("regNameUpper=%s" % regNameUpper)
         # isMatchReg = re.match("^[XD]\d+$", regNameUpper)
-        isMatchReg = re.match("^[XDW]\d+$", regNameUpper)
+        # isMatchReg = re.match("^[XDW]\d+$", regNameUpper)
+        isMatchReg = re.match("^([XDW]\d+)|(XZR)|(WZR)$", regNameUpper)
         # print("isMatchReg=%s" % isMatchReg)
         isValidOperand = bool(isMatchReg)
         # print("isValidOperand=%s" % isValidOperand)
         if not isValidOperand:
           isValidOperand = regNameUpper in ArmSpecialRegNameList
+      elif self.isDispl():
+        # o_displ    = 4        # Memory Reg [Base Reg + Index Reg + Displacement] phrase+addr
+        # curOperand=<Operand: op=[SP,#arg_18],type=4,val=0x18>
+        # if self.baseReg and (not self.indexReg) and self.displacement:
+        # curOperand=<Operand: op=[X9],type=4,val=0x0>
+        if self.baseReg and (not self.indexReg):
+          # Note: self.displacement is None / Not-None
+          # TODO: add more type support, like indexReg not None
+          isValidOperand = True
+      elif self.isPhrase():
+        # curOperand=<Operand: op=[X19,X8],type=3,val=0x94>
+        if self.baseReg and self.indexReg:
+          isValidOperand = True
 
     # print("isValidOperand=%s" % isValidOperand)
 
@@ -640,14 +721,35 @@ class Operand:
         contentStr = self.immValHex
     elif self.isIdpspec0():
         contentStr = self.operand
-        # <Operand: op=W0,UXTB,type=8,val=-1>
-        # W0,UXTB -> W0UXTB
-        contentStr = contentStr.replace(",", "")
-        # X21,LSL#32
-        # X8,ASR#29
-        contentStr = contentStr.replace("#", "")
-    # print("contentStr=%s" % contentStr)
+    elif self.isDispl():
+        # [SP,#arg_18]
+        # print("self.displacement=%s" % self.displacement)
+        if self.displacement:
+          displacementStr = ""
+          if self.value != None:
+            if (self.value >= 0) and (self.value < 8):
+              displacementStr = "%X" % self.value
+            else:
+              displacementStr = "0x%X" % self.value
+          # print("displacementStr=%s" % displacementStr)
+          contentStr = "%s%s%s%s" % (self.baseReg, Operand.offStr, displacementStr, Operand.valStr)
+        else:
+          contentStr = "%s%s" % (self.baseReg, Operand.valStr)
+    elif self.isPhrase():
+      # [X19,X8]
+      contentStr = "%s%s%s%s" % (self.baseReg, Operand.offStr, self.indexReg, Operand.valStr)
+
+    # remove invalid char
+    # <Operand: op=W0,UXTB,type=8,val=-1>
+    # W0,UXTB -> W0UXTB
+    contentStr = contentStr.replace(",", "")
+    # X21,LSL#32
+    # X8,ASR#29
+    contentStr = contentStr.replace("#", "")
+
     # TODO: add more case
+
+    # print("contentStr=%s" % contentStr)
     return contentStr
 
   @property
@@ -663,6 +765,11 @@ class Operand:
 
 # class Instruction(object):
 class Instruction:
+  # toStr = "to"
+  toStr = "To"
+  # addStr = "add"
+  addStr = "Add"
+
   def __init__(self, addr, name, operands):
     self.addr = addr
     self.disAsmStr = ida_getDisasmStr(addr)
@@ -690,8 +797,10 @@ class Instruction:
   def parse(addr):
     isDebug = False
     # # if addr == 0x10235D610:
-    # if addr == 0x1002B8340:
+    # # if addr == 0x1002B8340:
+    # if addr == 0x102390B18:
     #   isDebug = True
+    # isDebug = True
 
     if isDebug:
       print("Instruction: parsing 0x%X" % addr)
@@ -734,6 +843,7 @@ class Instruction:
       parsedInst = Instruction(addr=addr, name=instName, operands=operandList)
     if isDebug:
       print("parsedInst=%s" % parsedInst)
+      print("operandList=%s" % Operand.listToStr(operandList))
     return parsedInst
 
   def isInst(self, instName):
@@ -749,49 +859,71 @@ class Instruction:
     convert to meaningful string of Instruction real action / content
     """
     contentStr = ""
-    operandNum = len(self.operands)
-    # print("operandNum=%s" % operandNum)
-    if self.isMov() or self.isFmov():
-      #  MOV X0, X24
-      if operandNum == 2:
-        srcOperand = self.operands[1]
-        # print("srcOperand=%s" % srcOperand)
-        srcOperandStr = srcOperand.contentStr
-        # print("srcOperandStr=%s" % srcOperandStr)
-        dstOperand = self.operands[0]
-        # print("dstOperand=%s" % dstOperand)
-        dstOperandStr = dstOperand.contentStr
-        # print("dstOperandStr=%s" % dstOperandStr)
-        contentStr = "%sto%s" % (srcOperandStr, dstOperandStr)
 
-      # TODO: add case for operand > 2
-    elif self.isAdd():
+    isDebug = False
+    # isDebug = True
+
+    operandNum = len(self.operands)
+    if isDebug:
+      print("operandNum=%s" % operandNum)
+    if operandNum >= 2:
+      srcOperand = self.operands[1]
+      if isDebug:
+        print("srcOperand=%s" % srcOperand)
+      srcOperandStr = srcOperand.contentStr
+      if isDebug:
+        print("srcOperandStr=%s" % srcOperandStr)
+      dstOperand = self.operands[0]
+      if isDebug:
+        print("dstOperand=%s" % dstOperand)
+      dstOperandStr = dstOperand.contentStr
+      if isDebug:
+        print("dstOperandStr=%s" % dstOperandStr)
+
+    if self.isMov() or self.isFmov():
+      # MOV X0, X24
+      # FMOV D4, #-3.0
+
+      if operandNum == 2:
+        contentStr = "%s%s%s" % (srcOperandStr, Instruction.toStr, dstOperandStr)
+        # print("contentStr=%s" % contentStr)
+      elif operandNum > 2:
+        # TODO: add case for operand > 2
+        print("TODO: add support operand > 2 of MOV/FMOV")
+    elif self.isAdd() or self.isFadd():
       # <Instruction: 0x10235D574: ADD X0, X19, X8; location>
-      # print("is ADD: self=%s" % self)
-      instName = self.name
-      # print("instName=%s" % instName)
-      instOperandList = self.operands
-      # print("instOperandList=%s" % Operand.listToStr(instOperandList))
+      # # print("is ADD: self=%s" % self)
+      # instName = self.name
+      # # print("instName=%s" % instName)
+      # instOperandList = self.operands
+      # # print("instOperandList=%s" % Operand.listToStr(instOperandList))
       if operandNum == 3:
         # <Instruction: 0x10235D574: ADD X0, X19, X8; location>
-        srcOperand = self.operands[1]
-        # print("srcOperand=%s" % srcOperand)
         extracOperand = self.operands[2]
         # print("extracOperand=%s" % extracOperand)
-        dstOperand = self.operands[0]
-        # print("dstOperand=%s" % dstOperand)
-        srcOperandStr = srcOperand.contentStr
-        # print("srcOperandStr=%s" % srcOperandStr)
         extraOperandStr = extracOperand.contentStr
         # print("extraOperandStr=%s" % extraOperandStr)
-        dstOperandStr = dstOperand.contentStr
-        # print("dstOperandStr=%s" % dstOperandStr)
-        contentStr = "%sadd%sto%s" % (srcOperandStr, extraOperandStr, dstOperandStr)
+        contentStr = "%s%s%s%s%s" % (srcOperandStr, Instruction.addStr, extraOperandStr, Instruction.toStr, dstOperandStr)
 
       # TODO: add case operand == 2
+    elif self.isLdr():
+      # LDR X0, [SP,#arg_18];
+      if operandNum == 2:
+        contentStr = "%s%s%s" % (srcOperandStr, Instruction.toStr, dstOperandStr)
+      elif operandNum > 2:
+        # TODO: add case for operand > 2
+        print("TODO: add support operand > 2 of LDR")
+    elif self.isStr():
+      # STR XZR, [X19,X8]
+      if operandNum == 2:
+        contentStr = "%s%s%s" % (dstOperandStr, Instruction.toStr, srcOperandStr)
+      elif operandNum > 2:
+        # TODO: add case for operand > 2
+        print("TODO: add support operand > 2 of STR")
 
-    # TODO: add other Instruction support: SUB/LDR/STR/...
-    # print("contentStr=%s" % contentStr)
+    # TODO: add other Instruction support: SUB/STR/...
+    if isDebug:
+      print("contentStr=%s" % contentStr)
     return contentStr
 
   def isMov(self):
@@ -815,6 +947,9 @@ class Instruction:
 
   def isAdd(self):
     return self.isInst("ADD")
+
+  def isFadd(self):
+    return self.isInst("FADD")
 
   def isSub(self):
     return self.isInst("SUB")
@@ -1131,7 +1266,12 @@ if isExportResult:
 # toProcessFuncAddrList = [0x102475804] # WhatsApp
 # toProcessFuncAddrList = [0x10235D324, 0x10235D35C] # WhatsApp
 # toProcessFuncAddrList = [0x1002B8338] # WhatsApp
-# # toProcessFuncAddrList = [0xF2E54C, 0xF2E510, ] # SharedModules
+# toProcessFuncAddrList = [0xF2E54C, 0xF2E510, ] # SharedModules
+# toProcessFuncAddrList = [0x102390B18] # WhatsApp
+# toProcessFuncAddrList = [0x10235D598, 0x10235D5E0, 0x10235D99C, 0x10235D9A8] # WhatsApp
+# toProcessFuncAddrList = [0x10235D5B0, 0x10235D69C, 0x10235DA7C] # WhatsApp
+# toProcessFuncAddrList = [0xF2E534, 0xF2E37C, 0xF2E36C, 0xF2E488] # SharedModules
+# toProcessFuncAddrList = [0xF2E488] # SharedModules
 # allFuncAddrList = toProcessFuncAddrList
 
 # normal code
@@ -1173,7 +1313,7 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
   if isVerbose:
     print("funcName=%s, funcSize=%d=0x%X, funcEndAddr=0x%X" % (funcName, funcSize, funcSize, funcEndAddr))
 
-  # isMatchSomePattern = False
+  isNeedOmitCurrent = False
 
   # isAllMovThenRet = False
   # isAllMovThenBranch = False
@@ -1199,7 +1339,18 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
     if newInst:
       disAsmInstList.append(newInst)
     else:
-      print("Invalid/Unsupport instruction at 0x%X" % curFuncAddr)
+      instDisasmStr = ida_getDisasmStr(curFuncAddr)
+      instInfoStr = "[0x%X] %s" % (curFuncAddr, instDisasmStr)
+      if isFailForUnsupportInstruction:
+        isNeedOmitCurrent = True
+        print("Omit for found Invalid/Unsupported instruction: %s" % instInfoStr)
+        break
+      else:
+        # just omit for Invalid/Unsupport instruction and continue process
+        print("Found Invalid/Unsupported instruction: %s" % instInfoStr)
+
+  if isNeedOmitCurrent:
+    continue
 
   if isVerbose:
     instDisasmStrList = Instruction.listToStr(disAsmInstList)
