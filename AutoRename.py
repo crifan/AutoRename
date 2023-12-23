@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20231221
+# Update: 20231223
 
 import re
 import os
@@ -34,8 +34,8 @@ isFailForUnsupportInstruction = True
 isExportResult = True
 
 if isExportResult:
-  # outputFolder = None
-  outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
+  outputFolder = None
+  # outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
 
 SINGLE_INSTRUCTION_SIZE = 4 # bytes
 # for rename, the max number of instruction to support
@@ -1366,6 +1366,7 @@ if isExportResult:
 # toProcessFuncAddrList = [0xF2E534, 0xF2E37C, 0xF2E36C, 0xF2E488] # SharedModules
 # toProcessFuncAddrList = [0xF2E488] # SharedModules
 # toProcessFuncAddrList = [0x10235D6B4, 0x10235D69C, 0x10235D988, 0x10247B4C0] # WhatsApp
+# toProcessFuncAddrList = [0x58FB08, 0x504634, 0x504644, 0x50462C, 0x503948, 0x503958, 0x5035BC, 0x5035AC, 0x5035A4, 0x500188] # SharedModules
 # allFuncAddrList = toProcessFuncAddrList
 
 # normal code
