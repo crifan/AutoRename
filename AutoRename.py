@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20231223
+# Update: 20240101
 
 import re
 import os
@@ -11,12 +11,23 @@ from datetime import datetime,timedelta
 from datetime import time  as datetimeTime
 # import time
 import codecs
+import copy
 
 import idc
 import idaapi
 import idautils
 import ida_nalt
 import ida_segment
+
+################################################################################
+# Document
+################################################################################
+
+# IDA Python API:
+#   https://www.hex-rays.com/products/ida/support/idapython_docs/index.html
+#
+#   idc
+#     https://hex-rays.com//products/ida/support/idapython_docs/idc.html
 
 ################################################################################
 # Config & Settings & Const
@@ -43,6 +54,19 @@ SINGLE_INSTRUCTION_SIZE = 4 # bytes
 MAX_INSTRUCTION_NUM = 8
 MAX_INSTRUCTION_SIZE = MAX_INSTRUCTION_NUM * SINGLE_INSTRUCTION_SIZE
 
+IdaReservedStr = [
+  "class",
+  "id",
+  "const",
+  "char",
+  "void",
+  "return",
+  "private",
+  "namespace",
+  "catch",
+  "do",
+  "while",
+]
 
 PrologueEpilogueRegList = [
   "X19",
@@ -132,6 +156,21 @@ def saveJsonToFile(fullFilename, jsonValue, indent=2, fileEncoding="utf-8"):
         json.dump(jsonValue, jsonFp, indent=indent, ensure_ascii=False)
         # logging.debug("Complete save json %s", fullFilename)
 
+def isObjcFunctionName(funcName):
+  """
+  check is ObjC function name or not
+  eg:
+    "+[WAAvatarStringsActions editAvatar]" -> True
+    "-[ParentGroupInfoViewController initWithParentGroupChatSession:userContext:recentlyLinkedGroupJIDs:]" -> True
+    "-[OKEvolveSegmentationVC proCard]_116" -> True
+    "-[WAAvatarStickerUpSellSupplementaryView .cxx_destruct]" -> True
+    "sub_10004C6D8" -> False
+    "protocol witness for RawRepresentable.init(rawValue:) in conformance UIFont.FontWeight" -> True
+  """
+  isMatchObjcFuncName = re.match("^[\-\+]\[\w+ [\w\.\:]+\]\w*$", funcName)
+  isObjcFuncName = bool(isMatchObjcFuncName)
+  # print("funcName=%s -> isObjcFuncName=%s" % (funcName, isObjcFuncName))
+  return isObjcFuncName
 
 ################################################################################
 # IDA Util Function
@@ -313,8 +352,17 @@ def ida_getDemangledName(origSymbolName):
   demangledName = idc.demangle_name(origSymbolName, idc.get_inf_attr(idc.INF_SHORT_DEMNAMES))
   if demangledName:
     retName = demangledName
-  return retName
 
+  # do extra post process:
+  # remove/replace invalid char for non-objc function name
+  isNotObjcFuncName = not isObjcFunctionName(retName)
+  # print("isNotObjcFuncName=%s" % isNotObjcFuncName)
+  if isNotObjcFuncName:
+    retName = retName.replace("?", "")
+    retName = retName.replace(" ", "_")
+    retName = retName.replace("*", "_")
+  # print("origSymbolName=%s -> retName=%s" % (origSymbolName, retName))
+  return retName
 
 def ida_getFunctionEndAddr(funcAddr):
   """
@@ -473,6 +521,69 @@ def isDefaultSubFunction(curAddr):
   if curFuncName:
     isDefSubFunc, subAddStr = isDefaultSubFuncName(curFuncName)
   return isDefSubFunc, curFuncName
+
+def ida_getCurrentFolder():
+  """
+  get current folder for IDA current opened binary file
+    Example:
+      -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app
+      -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app/Frameworks/SharedModules.framework
+  """
+  curFolder = None
+  inputFileFullPath = ida_nalt.get_input_file_path()
+  # print("inputFileFullPath=%s" % inputFileFullPath)
+  if inputFileFullPath.startswith("/var/containers/Bundle/Application"):
+    # inputFileFullPath=/var/containers/Bundle/Application/2BE964D4-8DF0-4858-A06D-66CA8741ACDC/WhatsApp.app/WhatsApp
+    # -> maybe IDA bug -> after debug settings, output iOS device path, but later no authority to write exported file to it
+    # so need to avoid this case, change to output to PC side (Mac) current folder
+    curFolder = "."
+  else:
+    curFolder = os.path.dirname(inputFileFullPath)
+  # print("curFolder=%s" % curFolder)
+
+  # debugInputPath = ida_nalt.dbg_get_input_path()
+  # print("debugInputPath=%s" % debugInputPath)
+
+  curFolder = os.path.abspath(curFolder)
+  # print("curFolder=%s" % curFolder)
+  # here work:
+  # . -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app
+  return curFolder
+
+def isObjcMsgSendFuncName(funcName):
+  """
+  check function name is _objc_msgSend$xxx or not
+  eg:
+    "_objc_msgSend$arrayByAddingObjectsFromArray:" -> True, "arrayByAddingObjectsFromArray:"
+    "_objc_msgSend$addObject:_AB00" -> True, "addObject:_AB00"
+  """
+  isOjbcMsgSend = False
+  selectorStr = None
+  # _objc_msgSend$arrangedSubviews
+  # _objc_msgSend$arrayByAddingObjectsFromArray:
+  # _objc_msgSend$arrangeFromView:toView:progress:forwardDirection:
+  # objcMsgSendMatch = re.match("^_*objc_msgSend\$(?P<selectorStr>[\w\:]+¸)$", funcName)
+  # objcMsgSendMatch = re.match("^_*objc_msgSend\$(?P<selectorStr>[\w\:]+)(?P<renamedAddrSuffix>_[A-Za-z0-9]+)?$", funcName)
+  objcMsgSendMatch = re.match("^_*objc_msgSend\$(?P<selectorStr>[\w\:]+)$", funcName)
+  # print("objcMsgSendMatch=%s" % objcMsgSendMatch)
+  if objcMsgSendMatch:
+    selectorStr = objcMsgSendMatch.group("selectorStr")
+    # print("selectorStr=%s" % selectorStr)
+    isOjbcMsgSend = True
+  # print("isOjbcMsgSend=%s, selectorStr=%s" % (isOjbcMsgSend, selectorStr))
+  return isOjbcMsgSend, selectorStr
+
+def isObjcMsgSendFunction(curAddr):
+  """
+  check is default sub_XXX function or not from address
+  """
+  isObjcMsgSend = False
+  curFuncName  = ida_getFunctionName(curAddr)
+  # print("curFuncName=%s" % curFuncName)
+  if curFuncName:
+    isObjcMsgSend, selectorStr = isObjcMsgSendFuncName(curFuncName)
+  return isObjcMsgSend, selectorStr
+
 
 ################################################################################
 # IDA Util Class
@@ -1201,15 +1312,56 @@ def checkPrologue(instructionList):
 
 def isNeedProcessFunc(curFuncAddr):
   isNeedProcess = False
-  isDefaultSubFunc, funcName = isDefaultSubFunction(curFuncAddr)
-  if isDefaultSubFunc:
-    curFuncSize = ida_getFunctionSize(curFuncAddr)
-    # print("curFuncSize=%s" % curFuncSize)
-    # if curFuncSize <= MAX_INSTRUCTION_SIZE:
-    if isFuncSizeValid(curFuncSize):
+  curFuncSize = ida_getFunctionSize(curFuncAddr)
+  # print("curFuncSize=%s" % curFuncSize)
+  # if curFuncSize <= MAX_INSTRUCTION_SIZE:
+  isValidSize = isFuncSizeValid(curFuncSize)
+  # print("isValidSize=%s" % isValidSize)
+  if isValidSize:
+    isDefaultSubFunc, funcName = isDefaultSubFunction(curFuncAddr)
+    # print("isDefaultSubFunc=%s, funcName=%s" % (isDefaultSubFunc, funcName))
+    if isDefaultSubFunc:
       isNeedProcess = True
-  
+
+    if not isNeedProcess:
+      isObjcMsgSend, selectorStr = isObjcMsgSendFunction(curFuncAddr)
+      # print("isObjcMsgSend=%s, selectorStr=%s" % (isObjcMsgSend, selectorStr))
+      if isObjcMsgSend:
+        # isNeedProcess = True
+        # for has processed -> not process
+        renamedAddrSuffixMatch = re.match(".+_[A-Z0-9]{4,20}$", selectorStr)
+        # print("renamedAddrSuffixMatch=%s" % renamedAddrSuffixMatch)
+        if not renamedAddrSuffixMatch:
+          isNeedProcess = True
+
+  # print("isNeedProcess=%s" % isNeedProcess)
   return isNeedProcess
+
+def generateFirstParaName(selectorFirstPart):
+  """
+  generate first parameter name from selector first part
+  eg:
+    "arrayByAddingObjectsFromArray" -> "someArray"
+    "wa_alignedCenterFromCenter" -> "someCenter"
+    "arrangeFromView" -> "someView"
+    "postIdentityChangeNotificationForDeviceJIDs" -> deviceJIDs
+    "addObject" -> "someObject"
+    "pickerMode" -> "pickerMode"
+  """
+  firstParaName = ""
+  keywordMatch = re.search("(From|from|Add|add|For)(?P<keyword>[A-Z][a-z0-9_]+)$", selectorFirstPart)
+  # print("keywordMatch=%s" % keywordMatch)
+  if keywordMatch:
+    keyword = keywordMatch.group("keyword")
+    # print("keyword=%s" % keyword)
+    firstParaName = "some%s" % keyword
+
+  if not firstParaName:
+    firstParaName = selectorFirstPart
+
+  # print("selectorFirstPart=%s -> firstParaName=%s" % (selectorFirstPart, firstParaName))
+  return firstParaName
+
 
 def generateInstContentListStr(instructionList, isFirstDigitAddPrefix=True):
   # print("instructionList=%s, isFirstDigitAddPrefix=%s" % (instructionList, isFirstDigitAddPrefix))
@@ -1367,15 +1519,26 @@ if isExportResult:
 # toProcessFuncAddrList = [0xF2E488] # SharedModules
 # toProcessFuncAddrList = [0x10235D6B4, 0x10235D69C, 0x10235D988, 0x10247B4C0] # WhatsApp
 # toProcessFuncAddrList = [0x58FB08, 0x504634, 0x504644, 0x50462C, 0x503948, 0x503958, 0x5035BC, 0x5035AC, 0x5035A4, 0x500188] # SharedModules
+
+# # for objc_msgSend
+# # toProcessFuncAddrList = [0x1024D0000, 0x1024CFFA0, 0x1024CFF80, 0x1024CAB00] # WhatsApp
+# # toProcessFuncAddrList = [0x103EF20, 0x103EF40, 0x103EF60, 0x103EF80, 0x103EFA0, 0x103EFC0, 0x103EFE0, 0xFCE9A0, 0xFCE980, 0xFCE960, 0xF62140] # SharedModules
+# toProcessFuncAddrList = [0xF5DD20] # SharedModules
 # allFuncAddrList = toProcessFuncAddrList
 
 # normal code
 allFuncAddrList = ida_getFunctionAddrList()
+
 allFuncAddrListNum = len(allFuncAddrList)
 print("allFuncAddrListNum=%d" % allFuncAddrListNum)
 toProcessFuncAddrList = []
-for eachFuncAddr in allFuncAddrList:
+for curNum, eachFuncAddr in enumerate(allFuncAddrList, start=1):
+  logSub("[%d] %s" % (curNum, eachFuncAddr))
   isNeedProcess = isNeedProcessFunc(eachFuncAddr)
+
+  # for debug:
+  isNeedProcess = True
+
   if isNeedProcess:
     toProcessFuncAddrList.append(eachFuncAddr)
     # print("+ [0x%X]" % eachFuncAddr)
@@ -1387,35 +1550,34 @@ toRenameNum = 0
 renameOkNum = 0
 renameFailNum = 0
 
-if isExportResult:
-  renameDict = {}
+toChangeTypeNum = 0
+changeTypeOkNum = 0
+changeTypeFailNum = 0
 
-  renameOkList = []
-  renameFailList = []
+if isExportResult:
+  resultDict = {}
+
+  okList = []
+  failList = []
 
 for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
   funcAddrStr = "0x%X" % funcAddr
   logMain("[%08d/%08d] %s" % (curNum, toProcessFuncAddrListNum, funcAddrStr))
 
-  funcName = ida_getFunctionName(funcAddr)
   funcSize = ida_getFunctionSize(funcAddr)
   if not isFuncSizeValid(funcSize):
     print("Omit [%s] for invalid function size %d" % (funcAddrStr, funcSize))
     continue
 
-  funcEndAddr = ida_getFunctionEndAddr(funcAddr)
+  funcName = ida_getFunctionName(funcAddr)
 
-  if isVerbose:
-    print("funcName=%s, funcSize=%d=0x%X, funcEndAddr=0x%X" % (funcName, funcSize, funcSize, funcEndAddr))
-
-  isNeedOmitCurrent = False
-
-  # isAllMovThenRet = False
-  # isAllMovThenBranch = False
-  # isPrologue = False
+  oldFuncType = None
+  newFuncType = None
+  paraObj = "id curObj"
+  paraSelector = None
+  retType = "id"
 
   funcNameMainPart = None
-  funcNamePrefix = ""
   newFuncName = None
   retryFuncName = None
 
@@ -1424,101 +1586,197 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
   last4AddrStr = allAddrStr[-4:]
   # print("last4AddrStr=%s" % last4AddrStr)
 
-  disAsmInstList = []
-  for curFuncAddr in range(funcAddr, funcEndAddr, SINGLE_INSTRUCTION_SIZE):
-    if isVerbose:
-      logSub("[0x%X]" % curFuncAddr)
-    newInst = Instruction.parse(curFuncAddr)
-    if isVerbose:
-      print("newInst=%s" % newInst)
-    if newInst:
-      disAsmInstList.append(newInst)
+  isObjcMsgSend, selectorStr = isObjcMsgSendFuncName(funcName)
+  # print("isObjcMsgSend=%s, selectorStr=%s" % (isObjcMsgSend, selectorStr))
+  if isObjcMsgSend:
+    # note: here funcName is mandatory for change type, but actually is useless -> will not change to new name
+    notUseNewFuncName = funcName
+    # makesure name is valid
+    notUseNewFuncName = re.sub("\W", "_", notUseNewFuncName)
+    # print("notUseNewFuncName=%s" % notUseNewFuncName)
+
+    funcNameMainPart = funcName
+    # print("funcNameMainPart=%s" % funcNameMainPart)
+    oldFuncType = idc.get_type(funcAddr)
+    # oldFuncType=id(void *, const char *, ...)
+    # print("oldFuncType=%s" % oldFuncType)
+    newSelectorStr = selectorStr.replace(":", "_")
+    # print("newSelectorStr=%s" % newSelectorStr)
+    paraSelector = "const char * %s" % newSelectorStr
+    # print("paraSelector=%s" % paraSelector)
+    paramNum = selectorStr.count(":")
+    # print("paramNum=%s" % paramNum)
+    newValidParaList = []
+    if paramNum == 0:
+      newFuncType = "%s %s(%s, %s)" % (retType, notUseNewFuncName, paraObj, paraSelector)
+      # print("newFuncType=%s" % newFuncType)
     else:
-      instDisasmStr = ida_getDisasmStr(curFuncAddr)
-      instInfoStr = "[0x%X] %s" % (curFuncAddr, instDisasmStr)
-      if isFailForUnsupportInstruction:
-        isNeedOmitCurrent = True
-        print("Omit for found Invalid/Unsupported instruction: %s" % instInfoStr)
-        break
-      else:
-        # just omit for Invalid/Unsupport instruction and continue process
-        print("Found Invalid/Unsupported instruction: %s" % instInfoStr)
+      paraList = selectorStr.split(":")
+      # print("paraList=%s" % paraList)
+      # ['arrayByAddingObjectsFromArray', '']
+      # ['arrangeFromView', 'toView', 'progress', 'forwardDirection', '']
+      # remove last empty
+      lastItem = paraList[-1]
+      # print("lastItem=%s" % lastItem)
+      if not lastItem:
+        paraList.pop(-1)
+        # print("paraList=%s" % paraList)
+      selectorFirstPart = paraList[0]
+      # print("selectorFirstPart=%s" % selectorFirstPart)
+      firstParaName = generateFirstParaName(selectorFirstPart)
+      # print("firstParaName=%s" % firstParaName)
+      newParaList = copy.deepcopy(paraList)
+      # print("newParaList=%s" % newParaList)
+      newParaList[0] = firstParaName
+      # print("newParaList=%s" % newParaList)
+      # process system reserved string, eg: class, id, ...
+      for eachPara in newParaList:
+        # print("eachPara=%s" % eachPara)
 
-  if isNeedOmitCurrent:
-    continue
+        # # for debug
+        # eachPara = "class"
 
-  if isVerbose:
-    instDisasmStrList = Instruction.listToStr(disAsmInstList)
-    print("instDisasmStrList=%s" % instDisasmStrList)
-
-  isPrologue = checkPrologue(disAsmInstList)
-  if isVerbose:
-    print("isPrologue=%s" % isPrologue)
-  if isPrologue:
-    funcNameMainPart = "prologue"
-    newFuncName = "%s_%s" % (funcNameMainPart, allAddrStr)
-    retryFuncName = None
-  
-  if not newFuncName:
-    lastInst = disAsmInstList[-1]
-    # print("lastInst=%s" % lastInst)
-    lastIsRet = lastInst.isRet()
-    # print("lastIsRet=%s" % lastIsRet)
-    lastIsBranch = lastInst.isBranch()
-    # print("lastIsBranch=%s" % lastIsBranch)
-    if lastIsRet:
-      funcNamePrefix = ""
-    elif lastIsBranch:
-      isSupport, branchFunc, errMsg = generateBranchName(lastInst)
-      if isSupport:
-        funcNamePrefix = branchFunc
-      else:
-        print("Omit [%s] for %s" % (funcAddrStr, errMsg))
-        continue
-    
-    if isVerbose:
-      print("funcNamePrefix=%s" % funcNamePrefix)
-
-    instListExceptLast = disAsmInstList[0:-1]
-    if isVerbose:
-      # print("instListExceptLast=%s" % instListExceptLast)
-      print("instListExceptLast=%s" % Instruction.listToStr(instListExceptLast))
-
-    if instListExceptLast:
-      isAllInstSupport, retValue = checkAndGenerateInstListContentStr(instListExceptLast)
-      if isVerbose:
-        print("isAllInstSupport=%s, retValue=%s" % (isAllInstSupport, retValue))
-
-      if isAllInstSupport:
-        instContentStr = retValue
-        if funcNamePrefix:
-          funcNameMainPart = "%s_%s" % (funcNamePrefix, instContentStr)
+        if eachPara in IdaReservedStr:
+          firstChar = eachPara[0]
+          # print("firstChar=%s" % firstChar)
+          firstCharUpper = firstChar.upper()
+          # print("firstCharUpper=%s" % firstCharUpper)
+          restChars = eachPara[1:]
+          # print("restChars=%s" % restChars)
+          validPara = "the%s%s" % (firstCharUpper, restChars)
         else:
-          funcNameMainPart = instContentStr
-      else:
-        firstUnsupportInst = retValue
-        print("Fist unsupported instruction: %s" % firstUnsupportInst)
-    else:
-      print("Only 1 instrunction")
-      funcNameMainPart = funcNamePrefix
+          validPara = eachPara
+
+        # print("validPara=%s" % validPara)
+        newValidParaList.append(validPara)
+    # print("newValidParaList=%s" % newValidParaList)
+
+    newParaTypeNameList = []
+    newParaTypeNameList.append(paraObj)
+    newParaTypeNameList.append(paraSelector)
+    for eachValidPara in newValidParaList:
+      eachParaType = "id"
+      eachParaStr = "%s %s" % (eachParaType, eachValidPara)
+      newParaTypeNameList.append(eachParaStr)
+    # print("newParaTypeNameList=%s" % newParaTypeNameList)
+    newAllParaStr = ", ".join(newParaTypeNameList)
+    # print("newAllParaStr=%s" % newAllParaStr)
+    newFuncType = "%s %s(%s)" % (retType, notUseNewFuncName, newAllParaStr)
+    # print("newFuncType=%s" % newFuncType)
+  else:
+    # process each instrunction and generate new function name
+    funcEndAddr = ida_getFunctionEndAddr(funcAddr)
 
     if isVerbose:
-      print("funcNameMainPart=%s" % funcNameMainPart)
-    if funcNameMainPart:
-      isFisrtIsDigit = re.match("^\d+", funcNameMainPart)
+      print("funcName=%s, funcSize=%d=0x%X, funcEndAddr=0x%X" % (funcName, funcSize, funcSize, funcEndAddr))
+
+    isNeedOmitCurrent = False
+
+    # isAllMovThenRet = False
+    # isAllMovThenBranch = False
+    # isPrologue = False
+
+    funcNamePrefix = ""
+
+    disAsmInstList = []
+    for curFuncAddr in range(funcAddr, funcEndAddr, SINGLE_INSTRUCTION_SIZE):
       if isVerbose:
-        print("isFisrtIsDigit=%s" % isFisrtIsDigit)
-      if isFisrtIsDigit:
-        funcNameMainPart = "func_%s" % funcNameMainPart
-    if isVerbose:
-      print("funcNameMainPart=%s" % funcNameMainPart)
+        logSub("[0x%X]" % curFuncAddr)
+      newInst = Instruction.parse(curFuncAddr)
+      if isVerbose:
+        print("newInst=%s" % newInst)
+      if newInst:
+        disAsmInstList.append(newInst)
+      else:
+        instDisasmStr = ida_getDisasmStr(curFuncAddr)
+        instInfoStr = "[0x%X] %s" % (curFuncAddr, instDisasmStr)
+        if isFailForUnsupportInstruction:
+          isNeedOmitCurrent = True
+          print("Omit for found Invalid/Unsupported instruction: %s" % instInfoStr)
+          break
+        else:
+          # just omit for Invalid/Unsupport instruction and continue process
+          print("Found Invalid/Unsupported instruction: %s" % instInfoStr)
 
-    if funcNameMainPart:
-      newFuncName = "%s_%s" % (funcNameMainPart, last4AddrStr)
-      retryFuncName = "%s_%s" % (funcNameMainPart, allAddrStr)
+    if isNeedOmitCurrent:
+      continue
+
+    if isVerbose:
+      instDisasmStrList = Instruction.listToStr(disAsmInstList)
+      print("instDisasmStrList=%s" % instDisasmStrList)
+
+    isPrologue = checkPrologue(disAsmInstList)
+    if isVerbose:
+      print("isPrologue=%s" % isPrologue)
+    if isPrologue:
+      funcNameMainPart = "prologue"
+      newFuncName = "%s_%s" % (funcNameMainPart, allAddrStr)
+      retryFuncName = None
+    
+    if not newFuncName:
+      lastInst = disAsmInstList[-1]
+      # print("lastInst=%s" % lastInst)
+      lastIsRet = lastInst.isRet()
+      # print("lastIsRet=%s" % lastIsRet)
+      lastIsBranch = lastInst.isBranch()
+      # print("lastIsBranch=%s" % lastIsBranch)
+      if lastIsRet:
+        funcNamePrefix = ""
+      elif lastIsBranch:
+        isSupport, branchFunc, errMsg = generateBranchName(lastInst)
+        if isSupport:
+          funcNamePrefix = branchFunc
+        else:
+          print("Omit [%s] for %s" % (funcAddrStr, errMsg))
+          continue
+      
+      if isVerbose:
+        print("funcNamePrefix=%s" % funcNamePrefix)
+
+      instListExceptLast = disAsmInstList[0:-1]
+      if isVerbose:
+        # print("instListExceptLast=%s" % instListExceptLast)
+        print("instListExceptLast=%s" % Instruction.listToStr(instListExceptLast))
+
+      if instListExceptLast:
+        isAllInstSupport, retValue = checkAndGenerateInstListContentStr(instListExceptLast)
+        if isVerbose:
+          print("isAllInstSupport=%s, retValue=%s" % (isAllInstSupport, retValue))
+
+        if isAllInstSupport:
+          instContentStr = retValue
+          if funcNamePrefix:
+            funcNameMainPart = "%s_%s" % (funcNamePrefix, instContentStr)
+          else:
+            funcNameMainPart = instContentStr
+        else:
+          firstUnsupportInst = retValue
+          print("Fist unsupported instruction: %s" % firstUnsupportInst)
+      else:
+        print("Only 1 instrunction")
+        funcNameMainPart = funcNamePrefix
+
+      if isVerbose:
+        print("funcNameMainPart=%s" % funcNameMainPart)
+      if funcNameMainPart:
+        isFisrtIsDigit = re.match("^\d+", funcNameMainPart)
+        if isVerbose:
+          print("isFisrtIsDigit=%s" % isFisrtIsDigit)
+        if isFisrtIsDigit:
+          funcNameMainPart = "func_%s" % funcNameMainPart
+      if isVerbose:
+        print("funcNameMainPart=%s" % funcNameMainPart)
+
+  if funcNameMainPart:
+    newFuncName = "%s_%s" % (funcNameMainPart, last4AddrStr)
+    retryFuncName = "%s_%s" % (funcNameMainPart, allAddrStr)
 
   # # for debug
   # print("Test to rename: [0x%X] %s, %s" % (funcAddr, newFuncName, retryFuncName))
+
+  if isExportResult:
+    okItemDict = {}
+    failItemDict = {}
 
   if newFuncName:
     toRenameNum += 1
@@ -1529,37 +1787,90 @@ for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
       renameOkNum += 1
       print("renamed: [0x%X] %s -> %s" % (funcAddr, funcName, renamedName))
       if isExportResult:
-        reamedOkItemDict = {
-          "address": funcAddrStr,
-          "oldName": funcName,
-          "newName": renamedName,
+        okItemDict["address"] = funcAddrStr
+        # okItemDict["oldName"] = funcName
+        # okItemDict["newName"] = renamedName
+        okItemDict["name"] = {
+          "old": funcName,
+          "new": renamedName
         }
-        renameOkList.append(reamedOkItemDict)
     else:
       print("! rename fail for [0x%X] %s -> %s or %s" % (funcAddr, funcName, renamedName, retryFuncName))
       renameFailNum += 1
       if isExportResult:
-        renameFailDict = {
-          "address": funcAddrStr,
-          "oldName": funcName,
-          "newName": newFuncName,
-          "retryName": retryFuncName,
+        failItemDict["address"] = funcAddrStr
+        # failItemDict["oldName"] = funcName
+        # failItemDict["newName"] = newFuncName
+        # failItemDict["retryName"] = retryFuncName
+        failItemDict["name"] = {
+          "old": funcName,
+          "new": newFuncName,
+          "retry": retryFuncName,
         }
-        renameFailList.append(renameFailDict)
+
+  if newFuncType:
+    toChangeTypeNum += 1
+
+    # # for debug
+    # print("Test to change type: [0x%X] %s -> %s" % (funcAddr, oldFuncType, newFuncType))
+
+    # # for debug: no change type
+    # newFuncType = oldFuncType
+
+    setTypeRet = idc.SetType(funcAddr, newFuncType)
+    # print("type(setTypeRet)=%s" % type(setTypeRet)) # bool
+    if isVerbose:
+      print("setTypeRet=%s" % setTypeRet)
+    # if setTypeRet == 1:
+    if setTypeRet:
+      changeTypeOkNum += 1
+      print("SetType OK [0x%X] %s -> %s" % (funcAddr, oldFuncType, newFuncType))
+
+      if isExportResult:
+        okItemDict["address"] = funcAddrStr
+        # okItemDict["oldType"] = oldFuncType
+        # okItemDict["newType"] = newFuncType
+        okItemDict["type"] = {
+          "old": oldFuncType,
+          "new": newFuncType
+        }
+    else:
+      changeTypeFailNum += 1
+      print("! SetType failed [0x%X] %s -> %s" % (funcAddr, oldFuncType, newFuncType))
+      if isExportResult:
+        failItemDict["address"] = funcAddrStr
+        # failItemDict["oldType"] = oldFuncType
+        # failItemDict["newType"] = newFuncType
+        # failItemDict["setTypeRet"] = setTypeRet
+        failItemDict["type"] = {
+          "old": oldFuncType,
+          "new": newFuncType,
+          "setTypeRet": setTypeRet,
+        }
+
+  if isExportResult:
+    if okItemDict:
+      okList.append(okItemDict)
+  
+    if failItemDict:
+      failList.append(failItemDict)
 
 logMain("Summary Info")
 print("Total Functions num: %d" % len(allFuncAddrList))
 print("To process function num: %d" % toProcessFuncAddrListNum)
-print("To rename function num: %d" % toRenameNum)
-print("  OK num: %d" % renameOkNum)
-print("  fail num: %d" % renameFailNum)
+print("  To rename num: %d" % toRenameNum)
+print("    OK num: %d" % renameOkNum)
+print("    fail num: %d" % renameFailNum)
+print("  To change type num: %d" % toChangeTypeNum)
+print("    OK num: %d" % changeTypeOkNum)
+print("    fail num: %d" % changeTypeFailNum)
 
 if isExportResult:
   logMain("Export result to file")
 
-  renameDict = {
-    "ok": renameOkList,
-    "fail": renameFailList,
+  resultDict = {
+    "ok": okList,
+    "fail": failList,
   }
 
   # outputFilename = "IDA_renamedResult_%s.json" % curDateTimeStr
@@ -1571,5 +1882,5 @@ if isExportResult:
   print("Exporting result to file ...")
   print("  folder: %s" % outputFolder)
   print("  file: %s" % outputFilename)
-  saveJsonToFile(outputFullPath, renameDict)
+  saveJsonToFile(outputFullPath, resultDict)
   print("Exported: %s" % outputFullPath)
