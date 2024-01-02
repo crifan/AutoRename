@@ -1536,8 +1536,8 @@ for curNum, eachFuncAddr in enumerate(allFuncAddrList, start=1):
   logSub("[%d] %s" % (curNum, eachFuncAddr))
   isNeedProcess = isNeedProcessFunc(eachFuncAddr)
 
-  # for debug:
-  isNeedProcess = True
+  # # for debug:
+  # isNeedProcess = True
 
   if isNeedProcess:
     toProcessFuncAddrList.append(eachFuncAddr)
