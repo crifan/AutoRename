@@ -45,8 +45,8 @@ isFailForUnsupportInstruction = True
 isExportResult = True
 
 if isExportResult:
-  # outputFolder = None
-  outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
+  outputFolder = None
+  # outputFolder = "/Users/crifan/dev/dev_root/crifan/github/AutoRename/debug"
 
 SINGLE_INSTRUCTION_SIZE = 4 # bytes
 # for rename, the max number of instruction to support
