@@ -1335,9 +1335,10 @@ def generateFirstParaName(selectorFirstPart):
     "addObject" -> "someObject"
     "pickerMode" -> "pickerMode"
     "initWithCapacity" -> "someCapacity"
+    "mergePendingJournalIfPossibleForDatabaseAtPath" -> "somePath"
   """
   firstParaName = ""
-  keywordMatch = re.search("(From|from|Add|add|For|With)(?P<keyword>[A-Z][a-z0-9_]+)$", selectorFirstPart)
+  keywordMatch = re.search("(From|from|Add|add|For|With|At)(?P<keyword>[A-Z][a-z0-9_]+)$", selectorFirstPart)
   # print("keywordMatch=%s" % keywordMatch)
   if keywordMatch:
     keyword = keywordMatch.group("keyword")
