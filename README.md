@@ -1,6 +1,6 @@
 # AutoRename
 
-IDA plugin for auto rename symbol
+IDA plugin for auto rename (and change type for) symbol
 
 ## Git Repo
 
@@ -37,9 +37,11 @@ here try use (IDA Plugin) python code to automate whole rename process, to facil
 
 ## Example
 
-### AllMovThenRet
+### Rename
 
-#### sub_10235F998 -> `X24toX0_X23toX2_F998`
+#### AllMovThenRet
+
+##### sub_10235F998 -> `X24toX0_X23toX2_F998`
 
 ```bash
 __text:000000010235F998 X24toX0_X23toX2_F998
@@ -48,7 +50,7 @@ __text:000000010235F99C                 MOV             X2, X23
 __text:000000010235F9A0                 RET
 ```
 
-#### sub_10235F980 -> `func_0toX3_0toX4_X20toX5_F980`
+##### sub_10235F980 -> `func_0toX3_0toX4_X20toX5_F980`
 
 ```bash
 __text:000000010235F980 func_0toX3_0toX4_X20toX5_F980
@@ -58,7 +60,7 @@ __text:000000010235F988                 MOV             X5, X20
 __text:000000010235F98C                 RET
 ```
 
-#### sub_10001CBA8 -> `X20toX0_0x30toW1_0x7toW2_CBA8`
+##### sub_10001CBA8 -> `X20toX0_0x30toW1_0x7toW2_CBA8`
 
 ```bash
 __text:000000010001CBA8 X20toX0_0x30toW1_0x7toW2_CBA8
@@ -68,9 +70,9 @@ __text:000000010001CBB0                 MOV             W2, #7
 __text:000000010001CBB4                 RET
 ```
 
-### AllMovThenBranch
+#### AllMovThenBranch
 
-#### sub_10235D56C -> `objc_msgSend$addObject_X22toX2_D56C`
+##### sub_10235D56C -> `objc_msgSend$addObject_X22toX2_D56C`
 
 ```bash
 __text:000000010235D56C objc_msgSend$addObject_X22toX2_D56C
@@ -78,7 +80,7 @@ __text:000000010235D56C                 MOV             X2, X22 ; object
 __text:000000010235D570                 B               _objc_msgSend$addObject__AB00
 ```
 
-#### sub_F0AEB0 -> `WAXIncomingStanzaError_4toW0_X21toX1_X22toX3_X20toX4_AEB0`
+##### sub_F0AEB0 -> `WAXIncomingStanzaError_4toW0_X21toX1_X22toX3_X20toX4_AEB0`
 
 ```bash
 __text:0000000000F0AEB0 WAXIncomingStanzaError_4toW0_X21toX1_X22toX3_X20toX4_AEB0
@@ -89,9 +91,9 @@ __text:0000000000F0AEBC                 MOV             X4, X20
 __text:0000000000F0AEC0                 B               _WAXIncomingStanzaError
 ```
 
-### prologue
+#### prologue
 
-#### sub_10235D3C0 -> `prologue_10235D3C0`
+##### sub_10235D3C0 -> `prologue_10235D3C0`
 
 ```bash
 __text:000000010235D3C0 sub_10235D3C0
@@ -103,8 +105,60 @@ __text:000000010235D3D0                 STP             X20, X19, [SP,#arg_B0]
 __text:000000010235D3D4                 RET
 ```
 
+### change type
+
+#### objc_msgSend 
+
+##### `id(void *, const char *, ...)` -> `id objc_msgSend_updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_(id curObj, const char *updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_, id someProperties, id samplingWeights, id protocolVersion, id configKey, id configHash, id refreshInterval, id refreshID)`
+
+
+```asm
+__objc_stubs:00000001027A89C0 ; =============== S U B R O U T I N E =======================================
+__objc_stubs:00000001027A89C0
+__objc_stubs:00000001027A89C0
+__objc_stubs:00000001027A89C0 ; id __cdecl objc_msgSend_updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_(id curObj, const char *updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_, id someProperties, id samplingWeights, id protocolVersion, id configKey, id configHash, id refreshInterval, id refreshID)
+__objc_stubs:00000001027A89C0 _objc_msgSend$updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_
+__objc_stubs:00000001027A89C0                                         ; CODE XREF: sub_101C7DCB4+FC↑p
+__objc_stubs:00000001027A89C0                                         ; -[WARootViewController updateOfflineAssignABProperties]+E8↑p
+__objc_stubs:00000001027A89C0                 ADRP            X1, #selRef_updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_@PAGE
+__objc_stubs:00000001027A89C4                 LDR             X1, [X1,#selRef_updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_@PAGEOFF]
+__objc_stubs:00000001027A89C8                 ADRP            X16, #_objc_msgSend_ptr@PAGE
+__objc_stubs:00000001027A89CC                 LDR             X16, [X16,#_objc_msgSend_ptr@PAGEOFF]
+__objc_stubs:00000001027A89D0                 BR              X16
+__objc_stubs:00000001027A89D0 ; End of function _objc_msgSend$updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_
+```
+
+==
+
+```c
+id __cdecl objc_msgSend_updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_(
+        id curObj,
+        const char *updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_,
+        id someProperties,
+        id samplingWeights,
+        id protocolVersion,
+        id configKey,
+        id configHash,
+        id refreshInterval,
+        id refreshID)
+{
+  return _objc_msgSend(
+           curObj,
+           "updateWithProperties:samplingWeights:protocolVersion:configKey:configHash:refreshInterval:refreshID:",
+           someProperties,
+           samplingWeights,
+           protocolVersion,
+           configKey,
+           configHash,
+           refreshInterval);
+}
+```
+
 ## TODO
 
 * [x] support `FMOV`
 * [x] support `prologue`
-* [ ] support all `Functions`, `Names`
+* [x] support `objs_msgSend` change type
+* [x] support all `Functions`
+* [ ] add example screenshot: before and after compare effect
+* [ ] support all `Names`

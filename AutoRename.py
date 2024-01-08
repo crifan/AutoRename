@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20240105
+# Update: 20240108
 
 import re
 import os
@@ -204,6 +204,8 @@ def isObjcMsgSendFuncName(funcName):
 ################################################################################
 # IDA Util Function
 ################################################################################
+
+#-------------------- need call IDA api --------------------
 
 def ida_getInfo():
   """
@@ -519,33 +521,24 @@ def ida_getCurrentFolder():
   # . -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app
   return curFolder
 
-def ida_getCurrentFolder():
+def isDefaultTypeForObjcMsgSendFunction(funcAddr):
   """
-  get current folder for IDA current opened binary file
-    Example:
-      -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app
-      -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app/Frameworks/SharedModules.framework
+  check is objc_msgSend$xxx function's default type "id(void *, const char *, ...)" or not
+  eg:
+    0xF3EF8C -> True
+      note: funcType=id(void *, const char *, __int64, __int64, ...)
   """
-  curFolder = None
-  inputFileFullPath = ida_nalt.get_input_file_path()
-  # print("inputFileFullPath=%s" % inputFileFullPath)
-  if inputFileFullPath.startswith("/var/containers/Bundle/Application"):
-    # inputFileFullPath=/var/containers/Bundle/Application/2BE964D4-8DF0-4858-A06D-66CA8741ACDC/WhatsApp.app/WhatsApp
-    # -> maybe IDA bug -> after debug settings, output iOS device path, but later no authority to write exported file to it
-    # so need to avoid this case, change to output to PC side (Mac) current folder
-    curFolder = "."
-  else:
-    curFolder = os.path.dirname(inputFileFullPath)
-  # print("curFolder=%s" % curFolder)
+  isDefType = False
+  funcType = idc.get_type(funcAddr)
+  # print("[0x%X] -> funcType=%s" % (funcAddr, funcType))
+  if funcType:
+    defaultTypeMatch = re.search("\.\.\.\)$", funcType)
+    # print("defaultTypeMatch=%s" % defaultTypeMatch)
+    isDefType = bool(defaultTypeMatch)
+    # print("isDefType=%s" % isDefType)
+  return isDefType
 
-  # debugInputPath = ida_nalt.dbg_get_input_path()
-  # print("debugInputPath=%s" % debugInputPath)
-
-  curFolder = os.path.abspath(curFolder)
-  # print("curFolder=%s" % curFolder)
-  # here work:
-  # . -> /Users/crifan/dev/dev_root/iosReverse/WhatsApp/ipa/Payload/WhatsApp.app
-  return curFolder
+#-------------------- not need call IDA api --------------------
 
 def isDefaultSubFuncName(funcName):
   """
@@ -563,15 +556,17 @@ def isDefaultSubFuncName(funcName):
     addressStr = subMatch.group("addressStr")
   return isSub, addressStr
 
-def isReservedPrefix_loc(funcName):
+def isReservedPrefix_locType(funcName):
   """
-  check is reserved prefix loc_XXX name or not
+  check is reserved prefix loc_XXX / locret_XXX name or not
   eg:
     loc_100007A2C -> True, "100007A2C"
+    locret_16A0 -> True, "16A0"
   """
   isLoc = False
   addressStr = None
-  locMatch = re.match("^loc_(?P<addressStr>[0-9A-Fa-f]+)$", funcName)
+  # locMatch = re.match("^loc_(?P<addressStr>[0-9A-Fa-f]+)$", funcName)
+  locMatch = re.match("^loc(ret)?_(?P<addressStr>[0-9A-F]+)$", funcName)
   # print("locMatch=%s" % locMatch)
   if locMatch:
     isLoc = True
@@ -600,23 +595,6 @@ def isObjcMsgSendFunction(curAddr):
     isObjcMsgSend, selectorStr = isObjcMsgSendFuncName(curFuncName)
   return isObjcMsgSend, selectorStr
 
-
-def isDefaultTypeForObjcMsgSendFunction(funcAddr):
-  """
-  check is objc_msgSend$xxx function's default type "id(void *, const char *, ...)" or not
-  eg:
-    0xF3EF8C -> True
-      note: funcType=id(void *, const char *, __int64, __int64, ...)
-  """
-  isDefType = False
-  funcType = idc.get_type(funcAddr)
-  # print("[0x%X] -> funcType=%s" % (funcAddr, funcType))
-  if funcType:
-    defaultTypeMatch = re.search("\.\.\.\)$", funcType)
-    # print("defaultTypeMatch=%s" % defaultTypeMatch)
-    isDefType = bool(defaultTypeMatch)
-    # print("isDefType=%s" % isDefType)
-  return isDefType
 
 ################################################################################
 # IDA Util Class
@@ -1418,7 +1396,7 @@ def generateBranchName(branchInst):
   else:
     isDefSubFunc, subAddrStr = isDefaultSubFuncName(branchFunc)
     # print("isDefSubFunc=%s, subAddrStr=%s" % (isDefSubFunc, subAddrStr))
-    isReserved_loc, locAddrStr = isReservedPrefix_loc(branchFunc)
+    isReserved_loc, locAddrStr = isReservedPrefix_locType(branchFunc)
     # print("isReserved_loc=%s, locAddrStr=%s" % (isReserved_loc, locAddrStr))
     if isDefSubFunc:
       isSupport = False
@@ -1635,6 +1613,7 @@ if isExportResult:
 # # toProcessFuncAddrList = [0x103EF20, 0x103EF40, 0x103EF60, 0x103EF80, 0x103EFA0, 0x103EFC0, 0x103EFE0, 0xFCE9A0, 0xFCE980, 0xFCE960, 0xF62140] # SharedModules
 # toProcessFuncAddrList = [0xF9D280, 0xF3EF8C, 0xF3EFB4, 0xF5DD20, 0xF5DD40] # SharedModules
 # toProcessFuncAddrList = [0x15B9C] # SharedModules
+# toProcessFuncAddrList = [0x1013916A0] # WhatsApp
 # allFuncAddrList = toProcessFuncAddrList
 
 # normal code
