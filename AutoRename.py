@@ -1339,7 +1339,7 @@ def generateFirstParaName(selectorFirstPart):
     "setMessages_received" -> "someMessages_received"
   """
   firstParaName = ""
-  keywordMatch = re.search("(From|from|Add|add|For|With|At)(?P<keyword>[A-Z][a-z0-9_]+)$", selectorFirstPart)
+  keywordMatch = re.search("(From|from|Add|add|For|With|At|^set)(?P<keyword>[A-Z][a-z0-9_]+)$", selectorFirstPart)
   # print("keywordMatch=%s" % keywordMatch)
   if keywordMatch:
     keyword = keywordMatch.group("keyword")
