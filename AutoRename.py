@@ -1617,11 +1617,11 @@ if isExportResult:
 # toProcessFuncAddrList = [0xF9D280, 0xF3EF8C, 0xF3EFB4, 0xF5DD20, 0xF5DD40] # SharedModules
 # toProcessFuncAddrList = [0x15B9C] # SharedModules
 # toProcessFuncAddrList = [0x1013916A0] # WhatsApp
-toProcessFuncAddrList = [0x1025C7DB4, 0x1025C9450, 0x1025CB2E0, 0x1025EB104, 0x1026B7380, 0x1027AAB00] # WhatsApp
-allFuncAddrList = toProcessFuncAddrList
+# toProcessFuncAddrList = [0x1025C7DB4, 0x1025C9450, 0x1025CB2E0, 0x1025EB104, 0x1026B7380, 0x1027AAB00] # WhatsApp
+# allFuncAddrList = toProcessFuncAddrList
 
-# # normal code
-# allFuncAddrList = ida_getFunctionAddrList()
+# normal code
+allFuncAddrList = ida_getFunctionAddrList()
 
 
 allFuncAddrListNum = len(allFuncAddrList)
