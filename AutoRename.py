@@ -34,8 +34,8 @@ import ida_segment
 ################################################################################
 
 # verbose log
-isVerbose = False
-# isVerbose = True
+# isVerbose = False
+isVerbose = True
 
 # isFailForUnsupportInstruction = False
 isFailForUnsupportInstruction = True
@@ -66,6 +66,9 @@ IdaReservedStr = [
   "catch",
   "do",
   "while",
+  "new",
+  "default",
+  "for",
 ]
 
 PrologueEpilogueRegList = [
@@ -530,12 +533,12 @@ def isDefaultTypeForObjcMsgSendFunction(funcAddr):
   """
   isDefType = False
   funcType = idc.get_type(funcAddr)
-  # print("[0x%X] -> funcType=%s" % (funcAddr, funcType))
+  print("[0x%X] -> funcType=%s" % (funcAddr, funcType))
   if funcType:
     defaultTypeMatch = re.search("\.\.\.\)$", funcType)
-    # print("defaultTypeMatch=%s" % defaultTypeMatch)
+    print("defaultTypeMatch=%s" % defaultTypeMatch)
     isDefType = bool(defaultTypeMatch)
-    # print("isDefType=%s" % isDefType)
+    print("isDefType=%s" % isDefType)
   return isDefType
 
 #-------------------- not need call IDA api --------------------
@@ -1528,31 +1531,31 @@ def removeFuncNameAddressSuffixIfExist(funcName):
 def isNeedProcessFunc(curFuncAddr):
   isNeedProcess = False
   curFuncSize = ida_getFunctionSize(curFuncAddr)
-  # print("curFuncSize=%s" % curFuncSize)
+  print("curFuncSize=%s" % curFuncSize)
   # if curFuncSize <= MAX_INSTRUCTION_SIZE:
   isValidSize = isFuncSizeValid(curFuncSize)
-  # print("isValidSize=%s" % isValidSize)
+  print("isValidSize=%s" % isValidSize)
   if isValidSize:
     isDefaultSubFunc, funcName = isDefaultSubFunction(curFuncAddr)
-    # print("isDefaultSubFunc=%s, funcName=%s" % (isDefaultSubFunc, funcName))
+    print("isDefaultSubFunc=%s, funcName=%s" % (isDefaultSubFunc, funcName))
     if isDefaultSubFunc:
       isNeedProcess = True
 
     if not isNeedProcess:
       isObjcMsgSend, selectorStr = isObjcMsgSendFunction(curFuncAddr)
-      # print("isObjcMsgSend=%s, selectorStr=%s" % (isObjcMsgSend, selectorStr))
+      print("isObjcMsgSend=%s, selectorStr=%s" % (isObjcMsgSend, selectorStr))
       if isObjcMsgSend:
         hasRenamed, suffixAddr = isRenamedFunctionName(selectorStr)
-        # print("hasRenamed=%s, suffixAddr=%s" % (hasRenamed, suffixAddr))
+        print("hasRenamed=%s, suffixAddr=%s" % (hasRenamed, suffixAddr))
         if hasRenamed:
           isDefType = isDefaultTypeForObjcMsgSendFunction(curFuncAddr)
-          # print("isDefType=%s" % isDefType)
+          print("isDefType=%s" % isDefType)
           if isDefType:
             isNeedProcess = True
         else:
           isNeedProcess = True
 
-  # print("isNeedProcess=%s" % isNeedProcess)
+  print("isNeedProcess=%s" % isNeedProcess)
   return isNeedProcess
 
 
@@ -1614,10 +1617,11 @@ if isExportResult:
 # toProcessFuncAddrList = [0xF9D280, 0xF3EF8C, 0xF3EFB4, 0xF5DD20, 0xF5DD40] # SharedModules
 # toProcessFuncAddrList = [0x15B9C] # SharedModules
 # toProcessFuncAddrList = [0x1013916A0] # WhatsApp
-# allFuncAddrList = toProcessFuncAddrList
+toProcessFuncAddrList = [0x1025C7DB4, 0x1025C9450, 0x1025CB2E0, 0x1025EB104, 0x1026B7380, 0x1027AAB00] # WhatsApp
+allFuncAddrList = toProcessFuncAddrList
 
-# normal code
-allFuncAddrList = ida_getFunctionAddrList()
+# # normal code
+# allFuncAddrList = ida_getFunctionAddrList()
 
 
 allFuncAddrListNum = len(allFuncAddrList)
