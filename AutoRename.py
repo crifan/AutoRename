@@ -34,8 +34,8 @@ import ida_segment
 ################################################################################
 
 # verbose log
-# isVerbose = False
-isVerbose = True
+isVerbose = False
+# isVerbose = True
 
 # isFailForUnsupportInstruction = False
 isFailForUnsupportInstruction = True
@@ -533,12 +533,12 @@ def isDefaultTypeForObjcMsgSendFunction(funcAddr):
   """
   isDefType = False
   funcType = idc.get_type(funcAddr)
-  print("[0x%X] -> funcType=%s" % (funcAddr, funcType))
+  # print("[0x%X] -> funcType=%s" % (funcAddr, funcType))
   if funcType:
     defaultTypeMatch = re.search("\.\.\.\)$", funcType)
-    print("defaultTypeMatch=%s" % defaultTypeMatch)
+    # print("defaultTypeMatch=%s" % defaultTypeMatch)
     isDefType = bool(defaultTypeMatch)
-    print("isDefType=%s" % isDefType)
+    # print("isDefType=%s" % isDefType)
   return isDefType
 
 #-------------------- not need call IDA api --------------------
@@ -1531,31 +1531,31 @@ def removeFuncNameAddressSuffixIfExist(funcName):
 def isNeedProcessFunc(curFuncAddr):
   isNeedProcess = False
   curFuncSize = ida_getFunctionSize(curFuncAddr)
-  print("curFuncSize=%s" % curFuncSize)
+  # print("curFuncSize=%s" % curFuncSize)
   # if curFuncSize <= MAX_INSTRUCTION_SIZE:
   isValidSize = isFuncSizeValid(curFuncSize)
-  print("isValidSize=%s" % isValidSize)
+  # print("isValidSize=%s" % isValidSize)
   if isValidSize:
     isDefaultSubFunc, funcName = isDefaultSubFunction(curFuncAddr)
-    print("isDefaultSubFunc=%s, funcName=%s" % (isDefaultSubFunc, funcName))
+    # print("isDefaultSubFunc=%s, funcName=%s" % (isDefaultSubFunc, funcName))
     if isDefaultSubFunc:
       isNeedProcess = True
 
     if not isNeedProcess:
       isObjcMsgSend, selectorStr = isObjcMsgSendFunction(curFuncAddr)
-      print("isObjcMsgSend=%s, selectorStr=%s" % (isObjcMsgSend, selectorStr))
+      # print("isObjcMsgSend=%s, selectorStr=%s" % (isObjcMsgSend, selectorStr))
       if isObjcMsgSend:
         hasRenamed, suffixAddr = isRenamedFunctionName(selectorStr)
-        print("hasRenamed=%s, suffixAddr=%s" % (hasRenamed, suffixAddr))
+        # print("hasRenamed=%s, suffixAddr=%s" % (hasRenamed, suffixAddr))
         if hasRenamed:
           isDefType = isDefaultTypeForObjcMsgSendFunction(curFuncAddr)
-          print("isDefType=%s" % isDefType)
+          # print("isDefType=%s" % isDefType)
           if isDefType:
             isNeedProcess = True
         else:
           isNeedProcess = True
 
-  print("isNeedProcess=%s" % isNeedProcess)
+  # print("isNeedProcess=%s" % isNeedProcess)
   return isNeedProcess
 
 
