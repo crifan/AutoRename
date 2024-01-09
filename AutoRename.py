@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20240108
+# Update: 20240109
 
 import re
 import os
@@ -12,6 +12,8 @@ from datetime import time  as datetimeTime
 # import time
 import codecs
 import copy
+
+import logging
 
 import idc
 import idaapi
@@ -33,9 +35,13 @@ import ida_segment
 # Config & Settings & Const
 ################################################################################
 
-# verbose log
-isVerbose = False
-# isVerbose = True
+logUsePrint = True
+logUseLogging = False
+# logUsePrint = False
+# logUseLogging = True # Note: current will 1 log output 7 log -> maybe IDA bug, so temp not using logging
+
+logLevel = logging.INFO
+# logLevel = logging.DEBUG
 
 # isFailForUnsupportInstruction = False
 isFailForUnsupportInstruction = True
@@ -107,17 +113,117 @@ ArmSpecialRegNameList = [
 # Util Function
 ################################################################################
 
-def logMain(mainStr):
+
+CURRENT_LIB_FILENAME = "crifanLogging"
+
+LOG_FORMAT_FILE = "%(asctime)s %(filename)s:%(lineno)-4d %(levelname)-7s %(message)s"
+# https://docs.python.org/3/library/time.html#time.strftime
+LOG_FORMAT_FILE_DATETIME = "%Y/%m/%d %H:%M:%S"
+LOG_LEVEL_FILE = logging.DEBUG
+LOG_FORMAT_CONSOLE = "%(asctime)s %(filename)s:%(lineno)-4d %(levelname)-7s %(message)s"
+LOG_FORMAT_CONSOLE_DATETIME = "%Y%m%d %H:%M:%S"
+LOG_LEVEL_CONSOLE = logging.INFO
+# LOG_LEVEL_CONSOLE = logging.DEBUG
+
+def loggingInit(filename = None,
+                fileLogLevel = LOG_LEVEL_FILE,
+                fileLogFormat = LOG_FORMAT_FILE,
+                fileLogDateFormat = LOG_FORMAT_FILE_DATETIME,
+                enableConsole = True,
+                consoleLogLevel = LOG_LEVEL_CONSOLE,
+                consoleLogFormat = LOG_FORMAT_CONSOLE,
+                consoleLogDateFormat = LOG_FORMAT_CONSOLE_DATETIME,
+                ):
+    """
+    init logging for both log to file and console
+
+    :param filename: input log file name
+        if not passed, use current lib filename
+    :return: none
+    """
+    logFilename = ""
+    if filename:
+        logFilename = filename
+    else:
+        # logFilename = __file__ + ".log"
+        # '/Users/crifan/dev/dev_root/xxx/crifanLogging.py.log'
+        logFilename = CURRENT_LIB_FILENAME + ".log"
+
+    # logging.basicConfig(
+    #                 level    = fileLogLevel,
+    #                 format   = fileLogFormat,
+    #                 datefmt  = fileLogDateFormat,
+    #                 filename = logFilename,
+    #                 encoding = "utf-8",
+    #                 filemode = 'w')
+
+    # rootLogger = logging.getLogger()
+    rootLogger = logging.getLogger("")
+    rootLogger.setLevel(fileLogLevel)
+    fileHandler = logging.FileHandler(
+        filename=logFilename,
+        mode='w',
+        encoding="utf-8")
+    fileHandler.setLevel(fileLogLevel)
+    fileFormatter = logging.Formatter(
+        fmt=fileLogFormat,
+        datefmt=fileLogDateFormat
+    )
+    fileHandler.setFormatter(fileFormatter)
+    rootLogger.addHandler(fileHandler)
+
+    if enableConsole :
+        # define a Handler which writes INFO messages or higher to the sys.stderr
+        console = logging.StreamHandler()
+        console.setLevel(consoleLogLevel)
+        # set a format which is simpler for console use
+        consoleFormatter = logging.Formatter(
+            fmt=consoleLogFormat,
+            datefmt=consoleLogDateFormat)
+        # tell the handler to use this format
+        console.setFormatter(consoleFormatter)
+        rootLogger.addHandler(console)
+
+
+def log_print(formatStr, *paraTuple):
+  if paraTuple:
+    print(formatStr % paraTuple)
+  else:
+    print(formatStr)
+
+def logInfo(formatStr, *paraTuple):
+  if logUsePrint:
+    log_print(formatStr, *paraTuple)
+
+  if logUseLogging:
+    logging.info(formatStr, *paraTuple)
+
+# logInfo("test log info")
+# logInfo("cur level=%s", "INFO")
+# logDebug("cur year=%d", 2024)
+
+def logDebug(formatStr, *paraTuple):
+  if logUsePrint:
+    if logLevel <= logging.DEBUG:
+      log_print(formatStr, *paraTuple)
+  
+  if logUseLogging:
+    logging.debug(formatStr, *paraTuple)
+
+def logMainStr(mainStr):
   mainDelimiter = "="*40
-  print("%s %s %s" % (mainDelimiter, mainStr, mainDelimiter))
+  # print("%s %s %s" % (mainDelimiter, mainStr, mainDelimiter))
+  logInfo("%s %s %s", mainDelimiter, mainStr, mainDelimiter)
 
-def logSub(subStr):
+def logSubStr(subStr):
   subDelimiter = "-"*30
-  print("%s %s %s" % (subDelimiter, subStr, subDelimiter))
+  # print("%s %s %s" % (subDelimiter, subStr, subDelimiter))
+  logDebug("%s %s %s", subDelimiter, subStr, subDelimiter)
 
-def logSubSub(subStr):
+def logSubSubStr(subStr):
   subsubDelimiter = "-"*20
-  print("%s %s %s" % (subsubDelimiter, subStr, subsubDelimiter))
+  # print("%s %s %s" % (subsubDelimiter, subStr, subsubDelimiter))
+  logDebug("%s %s %s", subsubDelimiter, subStr, subsubDelimiter)
 
 
 def datetimeToStr(inputDatetime, format="%Y%m%d_%H%M%S"):
@@ -765,11 +871,9 @@ class Operand:
         # #-3.0
         # isMatchImm = re.match("^#\w+$", self.operand)
         isMatchImm = re.match("^#[\w\-\.]+$", self.operand)
-        if isDebug:
-          print("isMatchImm=%s" % isMatchImm)
+        logDebug("isMatchImm=%s" % isMatchImm)
         isValidOperand = bool(isMatchImm)
-        if isDebug:
-          print("isValidOperand=%s" % isValidOperand)
+        logDebug("isValidOperand=%s" % isValidOperand)
       elif self.isReg():
         # X0/X1
         # D8/D4
@@ -779,11 +883,9 @@ class Operand:
         # isMatchReg = re.match("^[XD]\d+$", regNameUpper)
         # isMatchReg = re.match("^[XDW]\d+$", regNameUpper)
         isMatchReg = re.match("^([XDW]\d+)|(XZR)|(WZR)$", regNameUpper)
-        if isDebug:
-          print("isMatchReg=%s" % isMatchReg)
+        logDebug("isMatchReg=%s" % isMatchReg)
         isValidOperand = bool(isMatchReg)
-        if isDebug:
-          print("isValidOperand=%s" % isValidOperand)
+        logDebug("isValidOperand=%s" % isValidOperand)
         if not isValidOperand:
           isValidOperand = regNameUpper in ArmSpecialRegNameList
       elif self.isDispl():
@@ -791,8 +893,7 @@ class Operand:
         # curOperand=<Operand: op=[SP,#arg_18],type=4,val=0x18>
         # if self.baseReg and (not self.indexReg) and self.displacement:
         # curOperand=<Operand: op=[X9],type=4,val=0x0>
-        if isDebug:
-          print("self.baseReg=%s, self.indexReg=%s, self.displacement=%s" % (self.baseReg, self.indexReg, self.displacement))
+        logDebug("self.baseReg=%s, self.indexReg=%s, self.displacement=%s" % (self.baseReg, self.indexReg, self.displacement))
 
         if self.baseReg and (not self.indexReg):
           # Note: self.displacement is None / Not-None
@@ -800,15 +901,13 @@ class Operand:
           isValidOperand = True
       elif self.isPhrase():
         # curOperand=<Operand: op=[X19,X8],type=3,val=0x94>
-        if isDebug:
-          print("self.baseReg=%s, self.indexReg=%s" % (self.baseReg, self.indexReg))
+        logDebug("self.baseReg=%s, self.indexReg=%s" % (self.baseReg, self.indexReg))
         if self.baseReg and self.indexReg:
           isValidOperand = True
       elif self.isNear():
         # o_near     = 7        # Immediate Near Address (CODE)        addr
         # curOperand=<Operand: op=_objc_copyWeak,type=7,val=0x1024ABBD0>
-        if isDebug:
-          print("self.value=%s" % self.value)
+        logDebug("self.value=%s" % self.value)
 
         if self.value:
           # jump to some (non 0) address -> consider is valid
@@ -956,55 +1055,38 @@ class Instruction:
 
   @staticmethod
   def parse(addr):
-    isDebug = False
-    # # if addr == 0x10235D610:
-    # # if addr == 0x1002B8340:
-    # if addr == 0x102390B18:
-    #   isDebug = True
-    # isDebug = True
-
-    if isDebug:
-      print("Instruction: parsing 0x%X" % addr)
+    logDebug("Instruction: parsing 0x%X", addr)
     parsedInst = None
 
     instName = idc.print_insn_mnem(addr)
-    if isDebug:
-      print("instName=%s" % instName)
+    logDebug("instName=%s", instName)
 
     curOperandIdx = 0
     curOperandVaild = True
     operandList = []
     while curOperandVaild:
-      if isDebug:
-        logSubSub("[%d]" % curOperandIdx)
+      logSubSubStr("[%d]" % curOperandIdx)
       curOperand = idc.print_operand(addr, curOperandIdx)
-      if isDebug:
-        print("curOperand=%s" % curOperand)
+      logDebug("curOperand=%s", curOperand)
       curOperandType = idc.get_operand_type(addr, curOperandIdx)
-      if isDebug:
-        print("curOperandType=%d" % curOperandType)
+      logDebug("curOperandType=%d", curOperandType)
       curOperandValue = idc.get_operand_value(addr, curOperandIdx)
-      if isDebug:
-        print("curOperandValue=%s=0x%X" % (curOperandValue, curOperandValue))
+      logDebug("curOperandValue=%s=0x%X", curOperandValue, curOperandValue)
       curOperand = Operand(curOperand, curOperandType, curOperandValue)
-      if isDebug:
-        print("curOperand=%s" % curOperand)
+      logDebug("curOperand=%s", curOperand)
       if curOperand.isValid():
         operandList.append(curOperand)
       else:
-        if isDebug:
-          print("End of operand for invalid %s" % curOperand)
+        logDebug("End of operand for invalid %s", curOperand)
         curOperandVaild = False
 
-      if isDebug:
-        print("curOperandVaild=%s" % curOperandVaild)
+      logDebug("curOperandVaild=%s", curOperandVaild)
       curOperandIdx += 1
 
     if operandList:
       parsedInst = Instruction(addr=addr, name=instName, operands=operandList)
-    if isDebug:
-      print("parsedInst=%s" % parsedInst)
-      print("operandList=%s" % Operand.listToStr(operandList))
+    logDebug("parsedInst=%s", parsedInst)
+    logDebug("operandList=%s", Operand.listToStr(operandList))
     return parsedInst
 
   def isInst(self, instName):
@@ -1024,30 +1106,23 @@ class Instruction:
     isDebug = False
     # isDebug = True
 
-    if isDebug:
-      print("self=%s" % self)
+    logDebug("self=%s", self)
 
     operandNum = len(self.operands)
-    if isDebug:
-      print("operandNum=%s" % operandNum)
+    logDebug("operandNum=%s", operandNum)
     
     isPairInst = self.isStp() or self.isLdp()
-    if isDebug:
-      print("isPairInst=%s" % isPairInst)
+    logDebug("isPairInst=%s", isPairInst)
     if not isPairInst:
       if operandNum >= 2:
         srcOperand = self.operands[1]
-        if isDebug:
-          print("srcOperand=%s" % srcOperand)
+        logDebug("srcOperand=%s", srcOperand)
         srcOperandStr = srcOperand.contentStr
-        if isDebug:
-          print("srcOperandStr=%s" % srcOperandStr)
+        logDebug("srcOperandStr=%s", srcOperandStr)
         dstOperand = self.operands[0]
-        if isDebug:
-          print("dstOperand=%s" % dstOperand)
+        logDebug("dstOperand=%s", dstOperand)
         dstOperandStr = dstOperand.contentStr
-        if isDebug:
-          print("dstOperandStr=%s" % dstOperandStr)
+        logDebug("dstOperandStr=%s", dstOperandStr)
 
     if self.isMov() or self.isFmov():
       # MOV X0, X24
@@ -1081,36 +1156,30 @@ class Instruction:
         contentStr = "%s%s%s" % (srcOperandStr, Instruction.toStr, dstOperandStr)
       elif operandNum > 2:
         # TODO: add case for operand > 2
-        print("TODO: add support operand > 2 of LDR")
+        logInfo("TODO: add support operand > 2 of LDR")
     elif self.isStr():
       # STR XZR, [X19,X8]
       if operandNum == 2:
         contentStr = "%s%s%s" % (dstOperandStr, Instruction.toStr, srcOperandStr)
       elif operandNum > 2:
         # TODO: add case for operand > 2
-        print("TODO: add support operand > 2 of STR")
+        logInfo("TODO: add support operand > 2 of STR")
     elif self.isStp():
       # <Instruction: 0x10235D6B4: STP X8, X9, [SP,#arg_18]>
       if operandNum == 3:
         srcOperand1 = self.operands[0]
-        if isDebug:
-          print("srcOperand1=%s" % srcOperand1)
+        logDebug("srcOperand1=%s", srcOperand1)
         srcOperand1Str = srcOperand1.contentStr
-        if isDebug:
-          print("srcOperand1Str=%s" % srcOperand1Str)
+        logDebug("srcOperand1Str=%s", srcOperand1Str)
         srcOperand2 = self.operands[1]
-        if isDebug:
-          print("srcOperand2=%s" % srcOperand2)
+        logDebug("srcOperand2=%s", srcOperand2)
         srcOperand2Str = srcOperand2.contentStr
-        if isDebug:
-          print("srcOperand2Str=%s" % srcOperand2Str)
+        logDebug("srcOperand2Str=%s", srcOperand2Str)
 
         dstOperand = self.operands[2]
-        if isDebug:
-          print("dstOperand=%s" % dstOperand)
+        logDebug("dstOperand=%s", dstOperand)
         dstOperandStr = dstOperand.contentStr
-        if isDebug:
-          print("dstOperandStr=%s" % dstOperandStr)
+        logDebug("dstOperandStr=%s", dstOperandStr)
         
         contentStr = "%s%s%s%s" % (srcOperand1Str, srcOperand2Str, Instruction.toStr, dstOperandStr)
     elif self.isLdp():
@@ -1118,30 +1187,23 @@ class Instruction:
       # <Instruction: 0x10235D98C: LDP D2, D3, [X8,#0x10]>
       if operandNum == 3:
         dstOperand1 = self.operands[0]
-        if isDebug:
-          print("dstOperand1=%s" % dstOperand1)
+        logDebug("dstOperand1=%s", dstOperand1)
         dstOperand1Str = dstOperand1.contentStr
-        if isDebug:
-          print("dstOperand1Str=%s" % dstOperand1Str)
+        logDebug("dstOperand1Str=%s", dstOperand1Str)
         dstOperand2 = self.operands[1]
-        if isDebug:
-          print("dstOperand2=%s" % dstOperand2)
+        logDebug("dstOperand2=%s", dstOperand2)
         dstOperand2Str = dstOperand2.contentStr
-        if isDebug:
-          print("dstOperand2Str=%s" % dstOperand2Str)
+        logDebug("dstOperand2Str=%s", dstOperand2Str)
 
         srcOperand = self.operands[2]
-        if isDebug:
-          print("srcOperand=%s" % srcOperand)
+        logDebug("srcOperand=%s", srcOperand)
         srcOperandStr = srcOperand.contentStr
-        if isDebug:
-          print("srcOperandStr=%s" % srcOperandStr)
+        logDebug("srcOperandStr=%s", srcOperandStr)
         
         contentStr = "%s%s%s%s" % (srcOperandStr, Instruction.toStr, dstOperand1Str, dstOperand2Str)
 
     # TODO: add other Instruction support: SUB/STR/...
-    if isDebug:
-      print("contentStr=%s" % contentStr)
+    logDebug("contentStr=%s", contentStr)
     return contentStr
 
   def isMov(self):
@@ -1465,39 +1527,29 @@ def getOriginSelector(funcAddr):
   originSelector = None
 
   funcEndAddr = ida_getFunctionEndAddr(funcAddr)
-  if isVerbose:
-    print("funcEndAddr=0x%X" % funcEndAddr)
+  logDebug("funcEndAddr=0x%X", funcEndAddr)
   lastInstAddr = funcEndAddr - SINGLE_INSTRUCTION_SIZE
-  if isVerbose:
-    print("lastInstAddr=0x%X" % lastInstAddr)
+  logDebug("lastInstAddr=0x%X", lastInstAddr)
   lastInst = Instruction.parse(lastInstAddr)
-  if isVerbose:
-    print("lastInst=%s" % lastInst)
+  logDebug("lastInst=%s", lastInst)
   lastIsBranch = lastInst.isBranch()
-  if isVerbose:
-    print("lastIsBranch=%s" % lastIsBranch)
+  logDebug("lastIsBranch=%s", lastIsBranch)
   if lastIsBranch:
     branchOperand = lastInst.operands[0]
-    if isVerbose:
-      print("branchOperand=%s" % branchOperand)
+    logDebug("branchOperand=%s" % branchOperand)
     branchOprand = branchOperand.operand
     branchValue = branchOperand.value
-    if isVerbose:
-      print("branchOprand=%s, branchValue=0x%X" % (branchOprand, branchValue))
+    logDebug("branchOprand=%s, branchValue=0x%X", branchOprand, branchValue)
     # targetFuncName = ida_getFunctionName(branchValue)
     targetName = ida_getName(branchValue)
     # targetName=_objc_msgSend$initWithKeyValueStore:namespace:binaryCoders:
-    if isVerbose:
-      # print("targetFuncName=%s, targetName=%s" % (targetFuncName, targetName))
-      print("targetName=%s" % targetName)
+    logDebug("targetName=%s", targetName)
     if targetName:
       isObjcMsgSend, originSelector = isObjcMsgSendFuncName(targetName)
       # isObjcMsgSend=True, originSelector=initWithKeyValueStore:namespace:binaryCoders:
-      if isVerbose:
-        print("isObjcMsgSend=%s, originSelector=%s" % (isObjcMsgSend, originSelector))
+      logDebug("isObjcMsgSend=%s, originSelector=%s", isObjcMsgSend, originSelector)
 
-  if originSelector:
-    print("originSelector=%s" % originSelector)
+  logDebug("originSelector=%s" % originSelector)
   return originSelector
 
 def isRenamedFunctionName(funcName):
@@ -1566,18 +1618,24 @@ def isNeedProcessFunc(curFuncAddr):
 ################################################################################
 
 idaVersion = idaapi.IDA_SDK_VERSION
-print("IDA Version: %s" % idaVersion)
+
+curDateTimeStr = getCurDatetimeStr()
 
 curBinFilename = ida_nalt.get_root_filename()
-print("curBinFilename=%s" % curBinFilename)
+
+idaLogFilename = "%s_idaRename_%s.log" % (curBinFilename, curDateTimeStr)
+loggingInit(idaLogFilename, fileLogLevel=logLevel, consoleLogLevel=logLevel)
+
+logInfo("IDA Version: %s", idaVersion)
+logDebug("curDateTimeStr=%s", curDateTimeStr)
+logInfo("curBinFilename=%s", curBinFilename)
+logInfo("idaLogFilename=%s", idaLogFilename)
 
 if isExportResult:
-  curDateTimeStr = getCurDatetimeStr()
-  print("curDateTimeStr=%s" % curDateTimeStr)
-
   if not outputFolder:
     outputFolder = ida_getCurrentFolder()
-    print("outputFolder=%s" % outputFolder)
+    logDebug("outputFolder=%s", outputFolder)
+
 
 # # # for debug
 # # ---------- allMovThenRet ----------
@@ -1627,11 +1685,10 @@ allFuncAddrList = ida_getFunctionAddrList()
 
 
 allFuncAddrListNum = len(allFuncAddrList)
-print("allFuncAddrListNum=%d" % allFuncAddrListNum)
+logInfo("allFuncAddrListNum=%d", allFuncAddrListNum)
 toProcessFuncAddrList = []
 for curNum, eachFuncAddr in enumerate(allFuncAddrList, start=1):
-  if isVerbose:
-    logSub("[%d] 0x%X" % (curNum, eachFuncAddr))
+  logSubStr("[%d] 0x%X" % (curNum, eachFuncAddr))
   isNeedProcess = isNeedProcessFunc(eachFuncAddr)
 
   # # for debug:
@@ -1639,10 +1696,9 @@ for curNum, eachFuncAddr in enumerate(allFuncAddrList, start=1):
 
   if isNeedProcess:
     toProcessFuncAddrList.append(eachFuncAddr)
-    # print("+ [0x%X]" % eachFuncAddr)
 
 toProcessFuncAddrListNum = len(toProcessFuncAddrList)
-print("toProcessFuncAddrListNum=%d" % toProcessFuncAddrListNum)
+logInfo("toProcessFuncAddrListNum=%d", toProcessFuncAddrListNum)
 
 toRenameNum = 0
 renameOmitNum = 0
@@ -1670,24 +1726,18 @@ def doFunctionRename(funcAddr):
 
   allAddrStr = "%X" % funcAddr
   funcAddrStr = "0x%s" % allAddrStr
-  if isVerbose:
-    print("allAddrStr=%s" % allAddrStr)
+  logDebug("allAddrStr=%s", allAddrStr)
   last4AddrStr = allAddrStr[-4:]
-  if isVerbose:
-    print("last4AddrStr=%s" % last4AddrStr)
+  logDebug("last4AddrStr=%s", last4AddrStr)
 
-  if isVerbose:
-    print("doFunctionRename: [%s]" % funcAddrStr)
+  logDebug("doFunctionRename: [%s]", funcAddrStr)
 
   funcName = ida_getFunctionName(funcAddr)
-  if isVerbose:
-    print("funcName=%s" % funcName)
+  logDebug("funcName=%s", funcName)
 
   # process each instrunction and generate new function name
   funcEndAddr = ida_getFunctionEndAddr(funcAddr)
-  if isVerbose:
-    print("funcEndAddr=0x%X" % funcEndAddr)
-
+  logDebug("funcEndAddr=0x%X", funcEndAddr)
 
   funcNameMainPart = None
   newFuncName = None
@@ -1697,11 +1747,9 @@ def doFunctionRename(funcAddr):
 
   disAsmInstList = []
   for curFuncAddr in range(funcAddr, funcEndAddr, SINGLE_INSTRUCTION_SIZE):
-    if isVerbose:
-      logSub("[0x%X]" % curFuncAddr)
+    logSubStr("[0x%X]" % curFuncAddr)
     newInst = Instruction.parse(curFuncAddr)
-    if isVerbose:
-      print("newInst=%s" % newInst)
+    logDebug("newInst=%s" % newInst)
     if newInst:
       disAsmInstList.append(newInst)
     else:
@@ -1715,13 +1763,11 @@ def doFunctionRename(funcAddr):
         # just omit for Invalid/Unsupport instruction and continue process
         print("Found Invalid/Unsupported instruction: %s" % instInfoStr)
 
-  if isVerbose:
-    instDisasmStrList = Instruction.listToStr(disAsmInstList)
-    print("instDisasmStrList=%s" % instDisasmStrList)
+  instDisasmStrList = Instruction.listToStr(disAsmInstList)
+  logDebug("instDisasmStrList=%s", instDisasmStrList)
 
   isPrologue = checkPrologue(disAsmInstList)
-  if isVerbose:
-    print("isPrologue=%s" % isPrologue)
+  logDebug("isPrologue=%s" % isPrologue)
   if isPrologue:
     funcNameMainPart = "prologue"
     newFuncName = "%s_%s" % (funcNameMainPart, allAddrStr)
@@ -1729,14 +1775,11 @@ def doFunctionRename(funcAddr):
 
   if not newFuncName:
     lastInst = disAsmInstList[-1]
-    if isVerbose:
-      print("lastInst=%s" % lastInst)
+    logDebug("lastInst=%s" % lastInst)
     lastIsRet = lastInst.isRet()
-    if isVerbose:
-      print("lastIsRet=%s" % lastIsRet)
+    logDebug("lastIsRet=%s" % lastIsRet)
     lastIsBranch = lastInst.isBranch()
-    if isVerbose:
-      print("lastIsBranch=%s" % lastIsBranch)
+    logDebug("lastIsBranch=%s" % lastIsBranch)
     if lastIsRet:
       funcNamePrefix = ""
     elif lastIsBranch:
@@ -1748,18 +1791,14 @@ def doFunctionRename(funcAddr):
         omitReason = errMsg
         return isOmitted, omitReason, isRenameOk, renamedResultDict
 
-    if isVerbose:
-      print("funcNamePrefix=%s" % funcNamePrefix)
+    logDebug("funcNamePrefix=%s" % funcNamePrefix)
 
     instListExceptLast = disAsmInstList[0:-1]
-    if isVerbose:
-      # print("instListExceptLast=%s" % instListExceptLast)
-      print("instListExceptLast=%s" % Instruction.listToStr(instListExceptLast))
+    logDebug("instListExceptLast=%s", Instruction.listToStr(instListExceptLast))
 
     if instListExceptLast:
       isAllInstSupport, retValue = checkAndGenerateInstListContentStr(instListExceptLast)
-      if isVerbose:
-        print("isAllInstSupport=%s, retValue=%s" % (isAllInstSupport, retValue))
+      logDebug("isAllInstSupport=%s, retValue=%s", isAllInstSupport, retValue)
 
       if isAllInstSupport:
         instContentStr = retValue
@@ -1780,16 +1819,13 @@ def doFunctionRename(funcAddr):
         omitReason = "Only 1 instrunction: %s" % lastInst
         return isOmitted, omitReason, isRenameOk, renamedResultDict
 
-    if isVerbose:
-      print("funcNameMainPart=%s" % funcNameMainPart)
+    logDebug("funcNameMainPart=%s", funcNameMainPart)
     if funcNameMainPart:
       isFisrtIsDigit = re.match("^\d+", funcNameMainPart)
-      if isVerbose:
-        print("isFisrtIsDigit=%s" % isFisrtIsDigit)
+      logDebug("isFisrtIsDigit=%s", isFisrtIsDigit)
       if isFisrtIsDigit:
         funcNameMainPart = "func_%s" % funcNameMainPart
-    if isVerbose:
-      print("funcNameMainPart=%s" % funcNameMainPart)
+    logDebug("funcNameMainPart=%s", funcNameMainPart)
 
   if funcNameMainPart:
     newFuncName = "%s_%s" % (funcNameMainPart, last4AddrStr)
@@ -1800,8 +1836,7 @@ def doFunctionRename(funcAddr):
 
   if newFuncName:
     isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
-    if isVerbose:
-      print("isRenameOk=%s, renamedName=%s" % (isRenameOk, renamedName))
+    logDebug("isRenameOk=%s, renamedName=%s", isRenameOk, renamedName)
 
     renamedResultDict["address"] = funcAddrStr
     renamedResultDict["name"] = {
@@ -1813,8 +1848,7 @@ def doFunctionRename(funcAddr):
       renamedResultDict["name"]["new"] = newFuncName
       renamedResultDict["name"]["retry"] = retryFuncName
 
-  if isVerbose:
-    print("isRenameOk=%s, renamedResultDict=%s" % (isRenameOk, renamedResultDict))
+  logDebug("isRenameOk=%s, renamedResultDict=%s", isRenameOk, renamedResultDict)
   return isOmitted, omitReason, isRenameOk, renamedResultDict
 
 def doFunctionChangeType(funcAddr):
@@ -1833,123 +1867,94 @@ def doFunctionChangeType(funcAddr):
   funcAddrStr = "0x%X" % funcAddr
 
   funcName = ida_getFunctionName(funcAddr)
-  if isVerbose:
-    print("funcName=%s" % funcName)
+  logDebug("funcName=%s", funcName)
   funcNameNoAddrSuffix = removeFuncNameAddressSuffixIfExist(funcName)
-  if isVerbose:
-    print("funcNameNoAddrSuffix=%s" % funcNameNoAddrSuffix)
+  logDebug("funcNameNoAddrSuffix=%s", funcNameNoAddrSuffix)
 
   # hasRenamed, suffixAddr = isRenamedFunctionName(funcName)
-  # if isVerbose:
-  #   print("hasRenamed=%s, suffixAddr=%s" % (hasRenamed, suffixAddr))
+  # logDebug("hasRenamed=%s, suffixAddr=%s", hasRenamed, suffixAddr)
   # if hasRenamed:
   #   addrSuffixP = "%s$" % suffixAddr
-  #   if isVerbose:
-  #     print("addrSuffixP=%s" % addrSuffixP)
+  #   logDebug("addrSuffixP=%s", addrSuffixP)
   #   funcNameNoAddrSuffix = re.sub(addrSuffixP, "", funcName)
   # else:
   #   funcNameNoAddrSuffix = funcName
-  # if isVerbose:
-  #   print("funcNameNoAddrSuffix=%s" % funcNameNoAddrSuffix)
+  # logDebug("funcNameNoAddrSuffix=%s", funcNameNoAddrSuffix)
 
   isObjcMsgSend, selectorStr = isObjcMsgSendFuncName(funcNameNoAddrSuffix)
-  if isVerbose:
-    print("isObjcMsgSend=%s, selectorStr=%s" % (isObjcMsgSend, selectorStr))
+  logDebug("isObjcMsgSend=%s, selectorStr=%s", isObjcMsgSend, selectorStr)
   if isObjcMsgSend:
     originSelector = getOriginSelector(funcAddr)
-    if isVerbose:
-      print("originSelector=%s" % originSelector)
+    logDebug("originSelector=%s", originSelector)
     if originSelector:
       originSelectorNoAddrSuffix = removeFuncNameAddressSuffixIfExist(originSelector)
-      if isVerbose:
-        print("originSelectorNoAddrSuffix=%s" % originSelectorNoAddrSuffix)
+      logDebug("originSelectorNoAddrSuffix=%s", originSelectorNoAddrSuffix)
       selectorStr = originSelectorNoAddrSuffix
-      if isVerbose:
-        print("selectorStr=%s" % selectorStr)
+      logDebug("selectorStr=%s", selectorStr)
 
     oldFuncType = idc.get_type(funcAddr)
     # oldFuncType=id(void *, const char *, ...)
-    if isVerbose:
-      print("oldFuncType=%s" % oldFuncType)
+    logDebug("oldFuncType=%s", oldFuncType)
 
     # note: here function name is mandatory for change type, but actually is useless -> will not change to new name
     notUseNewFuncName = funcNameNoAddrSuffix
     # makesure name is valid
     notUseNewFuncName = re.sub("\W", "_", notUseNewFuncName)
-    if isVerbose:
-      print("notUseNewFuncName=%s" % notUseNewFuncName)
+    logDebug("notUseNewFuncName=%s", notUseNewFuncName)
 
     funcNameMainPart = funcNameNoAddrSuffix
-    if isVerbose:
-      print("funcNameMainPart=%s" % funcNameMainPart)
+    logDebug("funcNameMainPart=%s", funcNameMainPart)
     newSelectorStr = selectorStr.replace(":", "_")
-    if isVerbose:
-      print("newSelectorStr=%s" % newSelectorStr)
+    logDebug("newSelectorStr=%s", newSelectorStr)
     paraSelector = "const char * %s" % newSelectorStr
-    if isVerbose:
-      print("paraSelector=%s" % paraSelector)
+    logDebug("paraSelector=%s", paraSelector)
     paramNum = selectorStr.count(":")
-    if isVerbose:
-      print("paramNum=%s" % paramNum)
+    logDebug("paramNum=%s", paramNum)
     newValidParaList = []
     if paramNum == 0:
       newFuncType = "%s %s(%s, %s)" % (retType, notUseNewFuncName, paraObj, paraSelector)
-      if isVerbose:
-        print("newFuncType=%s" % newFuncType)
+      logDebug("newFuncType=%s", newFuncType)
     else:
       paraList = selectorStr.split(":")
-      if isVerbose:
-        print("paraList=%s" % paraList)
+      logDebug("paraList=%s", paraList)
       # ['arrayByAddingObjectsFromArray', '']
       # ['arrangeFromView', 'toView', 'progress', 'forwardDirection', '']
       # remove last empty
       lastItem = paraList[-1]
-      if isVerbose:
-        print("lastItem=%s" % lastItem)
+      logDebug("lastItem=%s" % lastItem)
       if not lastItem:
         paraList.pop(-1)
-        if isVerbose:
-          print("paraList=%s" % paraList)
+        logDebug("paraList=%s" % paraList)
       selectorFirstPart = paraList[0]
-      if isVerbose:
-        print("selectorFirstPart=%s" % selectorFirstPart)
+      logDebug("selectorFirstPart=%s" % selectorFirstPart)
       firstParaName = generateFirstParaName(selectorFirstPart)
-      if isVerbose:
-        print("firstParaName=%s" % firstParaName)
+      logDebug("firstParaName=%s" % firstParaName)
       newParaList = copy.deepcopy(paraList)
-      if isVerbose:
-        print("newParaList=%s" % newParaList)
+      logDebug("newParaList=%s" % newParaList)
       newParaList[0] = firstParaName
-      if isVerbose:
-        print("newParaList=%s" % newParaList)
+      logDebug("newParaList=%s" % newParaList)
       # process system reserved string, eg: class, id, ...
       for eachPara in newParaList:
-        if isVerbose:
-          print("eachPara=%s" % eachPara)
+        logDebug("eachPara=%s" % eachPara)
 
         # # for debug
         # eachPara = "class"
 
         if eachPara in IdaReservedStr:
           firstChar = eachPara[0]
-          if isVerbose:
-            print("firstChar=%s" % firstChar)
+          logDebug("firstChar=%s" % firstChar)
           firstCharUpper = firstChar.upper()
-          if isVerbose:
-            print("firstCharUpper=%s" % firstCharUpper)
+          logDebug("firstCharUpper=%s" % firstCharUpper)
           restChars = eachPara[1:]
-          if isVerbose:
-            print("restChars=%s" % restChars)
+          logDebug("restChars=%s" % restChars)
           validPara = "the%s%s" % (firstCharUpper, restChars)
         else:
           validPara = eachPara
 
-        if isVerbose:
-          print("validPara=%s" % validPara)
+        logDebug("validPara=%s" % validPara)
         newValidParaList.append(validPara)
 
-    if isVerbose:
-      print("newValidParaList=%s" % newValidParaList)
+    logDebug("newValidParaList=%s" % newValidParaList)
 
     newParaTypeNameList = []
     newParaTypeNameList.append(paraObj)
@@ -1958,14 +1963,11 @@ def doFunctionChangeType(funcAddr):
       eachParaType = "id"
       eachParaStr = "%s %s" % (eachParaType, eachValidPara)
       newParaTypeNameList.append(eachParaStr)
-    if isVerbose:
-      print("newParaTypeNameList=%s" % newParaTypeNameList)
+    logDebug("newParaTypeNameList=%s" % newParaTypeNameList)
     newAllParaStr = ", ".join(newParaTypeNameList)
-    if isVerbose:
-      print("newAllParaStr=%s" % newAllParaStr)
+    logDebug("newAllParaStr=%s" % newAllParaStr)
     newFuncType = "%s %s(%s)" % (retType, notUseNewFuncName, newAllParaStr)
-    if isVerbose:
-      print("newFuncType=%s" % newFuncType)
+    logDebug("newFuncType=%s" % newFuncType)
   else:
     isOmit = True
 
@@ -1978,8 +1980,7 @@ def doFunctionChangeType(funcAddr):
 
     setTypeRet = idc.SetType(funcAddr, newFuncType)
     # print("type(setTypeRet)=%s" % type(setTypeRet)) # bool
-    if isVerbose:
-      print("setTypeRet=%s" % setTypeRet)
+    logDebug("setTypeRet=%s" % setTypeRet)
 
     changeTypeResultDict["address"] = funcAddrStr
     changeTypeResultDict["type"] = {
@@ -1994,8 +1995,7 @@ def doFunctionChangeType(funcAddr):
       isChangeTypeOk = False
       changeTypeResultDict["type"]["setTypeRet"] = setTypeRet
 
-  if isVerbose:
-    print("isOmit=%s, isChangeTypeOk=%s, changeTypeResultDict=%s" % (isOmit, isChangeTypeOk, changeTypeResultDict))
+  logDebug("isOmit=%s, isChangeTypeOk=%s, changeTypeResultDict=%s" % (isOmit, isChangeTypeOk, changeTypeResultDict))
   return isOmit, isChangeTypeOk, changeTypeResultDict
 
 def propcessSingleFunction(funcAddr):
@@ -2011,8 +2011,7 @@ def propcessSingleFunction(funcAddr):
 
   toRenameNum += 1
   isOmitted, omitReason, isRenameOk, renamedResultDict = doFunctionRename(funcAddr)
-  if isVerbose:
-    print("isOmitted=%s, omitReason=%s, isRenameOk=%s, renamedResultDict=%s" % (isOmitted, omitReason, isRenameOk, renamedResultDict))
+  logDebug("isOmitted=%s, omitReason=%s, isRenameOk=%s, renamedResultDict=%s" % (isOmitted, omitReason, isRenameOk, renamedResultDict))
   renameResultStr = ""
 
   if isOmitted:
@@ -2041,8 +2040,7 @@ def propcessSingleFunction(funcAddr):
 
   toChangeTypeNum += 1
   isOmit, isChangeTypeOk, changeTypeResultDict = doFunctionChangeType(funcAddr)
-  if isVerbose:
-    print("isOmit=%s, isChangeTypeOk=%s, changeTypeResultDict=%s" % (isOmit, isChangeTypeOk, changeTypeResultDict))
+  logDebug("isOmit=%s, isChangeTypeOk=%s, changeTypeResultDict=%s" % (isOmit, isChangeTypeOk, changeTypeResultDict))
 
   if not isOmit:
     oldFuncType = changeTypeResultDict["type"]["old"]
@@ -2062,8 +2060,7 @@ def propcessSingleFunction(funcAddr):
     print("[%s] SetType: %s, %s -> %s" % (funcAddrStr, changeTypeResultStr, oldFuncType, newFuncType))
 
   if isExportResult:
-    if isVerbose:
-      print("okItemDict=%s, failItemDict=%s" % (okItemDict, failItemDict))
+    logDebug("okItemDict=%s, failItemDict=%s" % (okItemDict, failItemDict))
 
     if okItemDict:
       okList.append(okItemDict)
@@ -2074,18 +2071,17 @@ def propcessSingleFunction(funcAddr):
 def main():
   for curNum, funcAddr in enumerate(toProcessFuncAddrList, start=1):
     funcAddrStr = "0x%X" % funcAddr
-    logMain("[%08d/%08d] %s" % (curNum, toProcessFuncAddrListNum, funcAddrStr))
+    logMainStr("[%08d/%08d] %s" % (curNum, toProcessFuncAddrListNum, funcAddrStr))
 
     funcSize = ida_getFunctionSize(funcAddr)
-    if isVerbose:
-      print("funcSize=%s" % funcSize)
+    logDebug("funcSize=%s" % funcSize)
     if not isFuncSizeValid(funcSize):
       print("Omit [%s] for invalid function size %d" % (funcAddrStr, funcSize))
       continue
 
     propcessSingleFunction(funcAddr)
 
-  logMain("Summary Info")
+  logMainStr("Summary Info")
   print("Total Functions num: %d" % len(allFuncAddrList))
   print("To process function num: %d" % toProcessFuncAddrListNum)
   print("  To rename num: %d" % toRenameNum)
@@ -2097,7 +2093,7 @@ def main():
   print("    fail num: %d" % changeTypeFailNum)
 
   if isExportResult:
-    logMain("Export result to file")
+    logMainStr("Export result to file")
 
     resultDict = {
       "ok": okList,
@@ -2105,11 +2101,9 @@ def main():
     }
 
     outputFilename = "%s_IdaRenamedResult_%s.json" % (curBinFilename, curDateTimeStr)
-    if isVerbose:
-      print("outputFilename=%s" % outputFilename)
+    logDebug("outputFilename=%s" % outputFilename)
     outputFullPath = os.path.join(outputFolder, outputFilename)
-    if isVerbose:
-      print("outputFullPath=%s" % outputFullPath)
+    logDebug("outputFullPath=%s" % outputFullPath)
 
     print("Exporting result to file ...")
     print("  folder: %s" % outputFolder)
