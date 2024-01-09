@@ -1,6 +1,6 @@
 # AutoRename
 
-IDA plugin for auto rename (and change type for) symbol
+IDA plugin for auto rename for symbol (and change function type, find objc_msgSend class name, add function comment)
 
 ## Git Repo
 
@@ -105,11 +105,17 @@ __text:000000010235D3D0                 STP             X20, X19, [SP,#arg_B0]
 __text:000000010235D3D4                 RET
 ```
 
-### change type
+### change type (or add function comment)
 
-#### objc_msgSend 
+Note: only for `objc_msgSend`
 
-##### `id(void *, const char *, ...)` -> `id objc_msgSend_updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_(id curObj, const char *updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_, id someProperties, id samplingWeights, id protocolVersion, id configKey, id configHash, id refreshInterval, id refreshID)`
+#### only change function type
+
+##### normal case
+
+* case 1
+
+`id(void *, const char *, ...)` -> `id objc_msgSend_updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_(id curObj, const char *updateWithProperties_samplingWeights_protocolVersion_configKey_configHash_refreshInterval_refreshID_, id someProperties, id samplingWeights, id protocolVersion, id configKey, id configHash, id refreshInterval, id refreshID)`
 
 
 ```asm
@@ -153,6 +159,79 @@ id __cdecl objc_msgSend_updateWithProperties_samplingWeights_protocolVersion_con
            refreshInterval);
 }
 ```
+
+* case 2
+
+```c
+id __cdecl objc_msgSend_xmppStreamDidNotAuthenticate_dataCenter_failureCode_lockDuration_retryAfter_tempBanReasonCode_tempBanURL_tempBanMessage_violationType_banAppealsToken_logoutMessageHeader_logoutMessageSubtext_logoutMessageLocale_violationReason_sourceAccount_(
+        XMPPConnection *curXMPPConnection,
+        const char *xmppStreamDidNotAuthenticate_dataCenter_failureCode_lockDuration_retryAfter_tempBanReasonCode_tempBanURL_tempBanMessage_violationType_banAppealsToken_logoutMessageHeader_logoutMessageSubtext_logoutMessageLocale_violationReason_sourceAccount_,
+        id xmppStreamDidNotAuthenticate,
+        id dataCenter,
+        id failureCode,
+        id lockDuration,
+        id retryAfter,
+        id tempBanReasonCode,
+        id tempBanURL,
+        id tempBanMessage,
+        id violationType,
+        id banAppealsToken,
+        id logoutMessageHeader,
+        id logoutMessageSubtext,
+        id logoutMessageLocale,
+        id violationReason,
+        id sourceAccount)
+{
+  return -[XMPPConnection xmppStreamDidNotAuthenticate:dataCenter:failureCode:lockDuration:retryAfter:tempBanReasonCode:tempBanURL:tempBanMessage:violationType:banAppealsToken:logoutMessageHeader:logoutMessageSubtext:logoutMessageLocale:violationReason:sourceAccount:](
+           curXMPPConnection,
+           "xmppStreamDidNotAuthenticate:dataCenter:failureCode:lockDuration:retryAfter:tempBanReasonCode:tempBanURL:temp"
+           "BanMessage:violationType:banAppealsToken:logoutMessageHeader:logoutMessageSubtext:logoutMessageLocale:violati"
+           "onReason:sourceAccount:",
+           xmppStreamDidNotAuthenticate,
+           dataCenter,
+           failureCode,
+           lockDuration,
+           retryAfter,
+           tempBanReasonCode);
+}
+```
+
+* for capable to find class name 
+  * single class name: change id type
+  * <= 5 class name: add to function comment
+
+eg:
+
+##### change id type
+
+```c
+id __cdecl objc_msgSend_zoomToUserLocationAnimated_resetZoomLevel_(
+        WAMapView *curWAMapView,
+        const char *zoomToUserLocationAnimated_resetZoomLevel_,
+        id zoomToUserLocationAnimated,
+        id resetZoomLevel)
+{
+  return -[WAMapView zoomToUserLocationAnimated:resetZoomLevel:](
+           curWAMapView,
+           "zoomToUserLocationAnimated:resetZoomLevel:",
+           zoomToUserLocationAnimated,
+           resetZoomLevel);
+}
+```
+
+in which, change id type (and name) from `id curObj` to ` WAMapView *curWAMapView`
+
+##### add to function comment
+
+```c
+// -[WACallManager endCallWithReason:], -[WACallManagerBase endCallWithReason:]
+id __cdecl objc_msgSend_endCallWithReason_(id curObj, const char *endCallWithReason_, id someReason)
+{
+  return _objc_msgSend(curObj, "endCallWithReason:", someReason);
+}
+```
+
+in which, added function comment `-[WACallManager endCallWithReason:], -[WACallManagerBase endCallWithReason:]`
 
 ## TODO
 
