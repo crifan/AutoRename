@@ -37,6 +37,12 @@ here try use (IDA Plugin) python code to automate whole rename process, to facil
 
 ## Example
 
+* Effect Compare
+  * before
+    * ![ida_rename_whatsapp_before](./assets/img/ida_rename_whatsapp_before.jpg)
+  * after
+    * ![ida_rename_whatsapp_after](./assets/img/ida_rename_whatsapp_after.jpg)
+
 ### Rename
 
 #### AllMovThenRet
