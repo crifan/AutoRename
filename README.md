@@ -10,7 +10,7 @@ https://github.com/crifan/AutoRename.git
 
 ## Background
 
-when iOS reverse, using IDA pseudocode to anlysis function logic, but too many `sub_XXX` default name functions.
+During iOS reversing, using IDA pseudocode to anlysis function logic, but too many `sub_XXX` default name functions.
 
 while many of them are simple function:
 
@@ -245,5 +245,5 @@ in which, added function comment `-[WACallManager endCallWithReason:], -[WACallM
 * [x] support `prologue`
 * [x] support `objs_msgSend` change type
 * [x] support all `Functions`
-* [ ] add example screenshot: before and after compare effect
+* [x] add example screenshot: before and after compare effect
 * [ ] support all `Names`
