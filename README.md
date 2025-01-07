@@ -1,6 +1,8 @@
 # AutoRename
 
-IDA plugin for auto rename for symbol (and change function type, find objc_msgSend class name, add function comment)
+* Update: `20250107`
+
+IDA plugin for auto rename for symbol (and change function type, find objc_msgSend class name, add function comment, rename for wrong Lumina functions, etc.)
 
 ## Git Repo
 
@@ -110,6 +112,109 @@ __text:000000010235D3CC                 STP             X22, X21, [SP,#arg_A0]
 __text:000000010235D3D0                 STP             X20, X19, [SP,#arg_B0]
 __text:000000010235D3D4                 RET
 ```
+
+#### Jump to _swift_getInitializedObjCClass
+
+* Note
+  * before run `AutoRename.py`, need to **disable** IDA's `Enable macros`
+    * howto: `IDA`->`General`->`IDA Options`->`Analysis`->`Kernal options3`->NOT select: `Enable macros`
+    * effect
+      * from `1` instruction
+        ```asm
+        __text:000000000000E3C0 60 88 00 F0+                ADRL            X0, _OBJC_CLASS_$__TtC11KonaPayCore26ApiInitiateRechargeRequest ; classType
+        __text:000000000000E3C0 00 20 2F 91
+        ```
+      * to `2` instructions
+        ```asm
+        __text:000000000000E3C0 60 88 00 F0                 ADRP            X0, #unk_111D000 ; classType
+        __text:000000000000E3C4 00 20 2F 91                 ADD             X0, X0, #_OBJC_CLASS_$__TtC11KonaPayCore26ApiInitiateRechargeRequest@PAGEOFF
+        ```
+
+##### `type metadata accessor for AppDelegate_5` -> `getObjCClass_ApiInitiateRechargeRequest`
+
+* before
+
+IDA assembly
+
+```asm
+__text:000000000000E3B8             ; =============== S U B R O U T I N E =======================================
+__text:000000000000E3B8
+__text:000000000000E3B8             ; $s11CryptoTrade11AppDelegateCMa
+__text:000000000000E3B8             ; type metadata accessor for AppDelegate
+__text:000000000000E3B8             ; Attributes: bp-based frame info_from_lumina
+__text:000000000000E3B8
+__text:000000000000E3B8             ; __int64 type_metadata_accessor_for_AppDelegate_5()
+__text:000000000000E3B8             type_metadata_accessor_for_AppDelegate_5
+__text:000000000000E3B8                                                     ; CODE XREF: sub_6EE5C+60↓p
+__text:000000000000E3B8                                                     ; DATA XREF: __constg_swiftt:nominal type descriptor for ApiInitiateRechargeRequest↓o
+__text:000000000000E3B8
+__text:000000000000E3B8             var_s0          =  0
+__text:000000000000E3B8
+__text:000000000000E3B8 FD 7B BF A9                 STP             X29, X30, [SP,#-0x10+var_s0]!
+__text:000000000000E3BC FD 03 00 91                 MOV             X29, SP
+__text:000000000000E3C0 60 88 00 F0                 ADRP            X0, #unk_111D000 ; classType
+__text:000000000000E3C4 00 20 2F 91                 ADD             X0, X0, #_OBJC_CLASS_$__TtC11KonaPayCore26ApiInitiateRechargeRequest@PAGEOFF
+__text:000000000000E3C8 43 75 32 94                 BL              _swift_getInitializedObjCClass
+__text:000000000000E3CC 01 00 80 D2                 MOV             X1, #0
+__text:000000000000E3D0 FD 7B C1 A8                 LDP             X29, X30, [SP+var_s0],#0x10
+__text:000000000000E3D4 C0 03 5F D6                 RET
+__text:000000000000E3D4             ; End of function type_metadata_accessor_for_AppDelegate_5
+```
+
+* IDA pseudocode code
+
+```c
+// $s11CryptoTrade11AppDelegateCMa 
+// type metadata accessor for AppDelegate
+__int64 type_metadata_accessor_for_AppDelegate_5()
+{
+  return swift_getInitializedObjCClass(&OBJC_CLASS____TtC11KonaPayCore26ApiInitiateRechargeRequest);
+}
+```
+
+* -> after
+
+IDA assembly
+
+```asm
+__text:000000000000E3B8             ; =============== S U B R O U T I N E =======================================
+__text:000000000000E3B8
+__text:000000000000E3B8             ; Attributes: bp-based frame info_from_lumina
+__text:000000000000E3B8
+__text:000000000000E3B8             ; __int64 getObjCClass_ApiInitiateRechargeRequest()
+__text:000000000000E3B8             getObjCClass_ApiInitiateRechargeRequest ; CODE XREF: sub_6EE5C+60↓p
+__text:000000000000E3B8                                                     ; DATA XREF: __constg_swiftt:nominal type descriptor for ApiInitiateRechargeRequest↓o
+__text:000000000000E3B8
+__text:000000000000E3B8             var_s0          =  0
+__text:000000000000E3B8
+__text:000000000000E3B8 FD 7B BF A9                 STP             X29, X30, [SP,#-0x10+var_s0]!
+__text:000000000000E3BC FD 03 00 91                 MOV             X29, SP
+__text:000000000000E3C0 60 88 00 F0                 ADRP            X0, #unk_111D000 ; classType
+__text:000000000000E3C4 00 20 2F 91                 ADD             X0, X0, #_OBJC_CLASS_$__TtC11KonaPayCore26ApiInitiateRechargeRequest@PAGEOFF
+__text:000000000000E3C8 43 75 32 94                 BL              _swift_getInitializedObjCClass
+__text:000000000000E3CC 01 00 80 D2                 MOV             X1, #0
+__text:000000000000E3D0 FD 7B C1 A8                 LDP             X29, X30, [SP+var_s0],#0x10
+__text:000000000000E3D4 C0 03 5F D6                 RET
+__text:000000000000E3D4             ; End of function getObjCClass_ApiInitiateRechargeRequest
+```
+
+* IDA pseudocode code
+
+```c
+__int64 getObjCClass_ApiInitiateRechargeRequest()
+{
+  return swift_getInitializedObjCClass(&OBJC_CLASS____TtC11KonaPayCore26ApiInitiateRechargeRequest);
+}
+```
+
+Note: 
+
+* also, has removed the wrong function comment, which is from Lumina
+  ```bash
+  $s11CryptoTrade11AppDelegateCMa 
+  type metadata accessor for AppDelegate
+  ```
+
 
 ### change type (or add function comment)
 
@@ -241,9 +346,4 @@ in which, added function comment `-[WACallManager endCallWithReason:], -[WACallM
 
 ## TODO
 
-* [x] support `FMOV`
-* [x] support `prologue`
-* [x] support `objs_msgSend` change type
-* [x] support all `Functions`
-* [x] add example screenshot: before and after compare effect
 * [ ] support all `Names`

@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20240125
+# Update: 20250107
 
 import re
 import os
@@ -46,7 +46,7 @@ logUseLogging = False
 # logUseLogging = True # Note: current will 1 log output 7 log -> maybe IDA bug, so temp not using logging
 
 logLevel = logging.INFO
-# logLevel = logging.DEBUG
+# logLevel = logging.DEBUG # for debug
 
 # from selector string to find (ObjC Class) id type
 isGenerateIdType = True
@@ -545,6 +545,15 @@ def isObjcMsgSendFuncName(funcName):
   # print("isOjbcMsgSend=%s, selectorStr=%s" % (isOjbcMsgSend, selectorStr))
   return isOjbcMsgSend, selectorStr
 
+def isFuncName_TypeMetadataAccessorForAppDelegate(funcName):
+  """
+  check function name is 'type metadata accessor for AppDelegate_N' or not
+  eg:
+    type metadata accessor for AppDelegate_5
+  """
+  isTypeMetadataAccessorForAppDelegate = re.match("type metadata accessor for AppDelegate", funcName)
+  return isTypeMetadataAccessorForAppDelegate
+
 ################################################################################
 # IDA Util Function
 ################################################################################
@@ -939,6 +948,13 @@ def isObjcMsgSendFunction(curAddr):
     isObjcMsgSend, selectorStr = isObjcMsgSendFuncName(curFuncName)
   return isObjcMsgSend, selectorStr
 
+def isFunc_TypeMetadataAccessorForAppDelegate(curAddr):
+  """
+  check is function type_metadata_accessor_for_AppDelegate or not from address
+  """
+  curFuncName = ida_getFunctionName(curAddr)
+  isTypeMetadataAccessorForAppDelegate = isFuncName_TypeMetadataAccessorForAppDelegate(curFuncName)
+  return isTypeMetadataAccessorForAppDelegate
 
 ################################################################################
 # IDA Util Class
@@ -946,7 +962,11 @@ def isObjcMsgSendFunction(curAddr):
 
 class Operand:
   # Operand Type
-  # https://hex-rays.com/products/ida/support/idapython_docs/idc.html#idc.get_operand_value
+  # old doc: 
+  #   https://hex-rays.com/products/ida/support/idapython_docs/idc.html#idc.get_operand_value
+  # new doc: 
+  #   https://cpp.docs.hex-rays.com/group__o__.html
+  #   https://docs.hex-rays.com/developer-guide/idc/idc-api-reference/alphabetical-list-of-idc-functions/276
   o_void     = 0        # No Operand                           ----------
   o_reg      = 1        # General Register (al,ax,es,ds...)    reg
   o_mem      = 2        # Direct Memory Reference  (DATA)      addr
@@ -1004,11 +1024,13 @@ class Operand:
     self.indexReg = None
     # for o_displ
     self.displacement = None
+    self.displ_addr = None
 
     self._postInit()
   
   def _postInit(self):
-    # print("_postInit")
+    # print("")
+    logDebug("_postInit: self.operand=%s", self.operand)
     if self.isDispl():
       # o_displ    = 4        # Memory Reg [Base Reg + Index Reg + Displacement] phrase+addr
       # [SP,#arg_18]
@@ -1016,13 +1038,30 @@ class Operand:
       # print("self.operand=%s" % self.operand)
       # displMatch = re.search("\[(?P<baseReg>\w+),(?P<displacement>#[\w\-\.]+)\]", self.operand)
       # [X9]
-      displMatch = re.search("\[(?P<baseReg>\w+)(,(?P<displacement>#[\w\-\.]+))?\]", self.operand)
-      # print("displMatch=%s" % displMatch)
+      # displMatch = re.search("\[(?P<baseReg>\w+)(,(?P<displacement>#[\w\-\.]+))?\]", self.operand)
+      # curOperand=[SP,#-0x10+var_s0]!
+      displMatch = re.search("\[(?P<baseReg>\w+)(,(?P<displacement>#[\w\-\.\+]+))?\]!?", self.operand)
+      logDebug("displMatch=%s", displMatch)
       if displMatch:
         self.baseReg = displMatch.group("baseReg")
-        # print("self.baseReg=%s" % self.baseReg)
+        logDebug("self.baseReg=%s", self.baseReg)
         self.displacement = displMatch.group("displacement")
-        # print("self.displacement=%s" % self.displacement)
+        logDebug("self.displacement=%s", self.displacement)
+
+      if not displMatch:
+        # LDP X29, X30, [SP+var_s0],#0x10
+        # curOperand=[SP+var_s0],#0x10
+        displMatch = re.search("\[(?P<baseReg>\w+)\+(?P<displacement>\w+)\],#(?P<displ_addr>)", self.operand)
+        logDebug("displMatch=%s", displMatch)
+
+        if displMatch:
+          self.baseReg = displMatch.group("baseReg")
+          logDebug("self.baseReg=%s", self.baseReg)
+          self.displacement = displMatch.group("displacement")
+          logDebug("self.displacement=%s", self.displacement)
+          self.displ_addr = displMatch.group("displ_addr")
+          logDebug("self.displ_addr=%s", self.displ_addr)
+
     elif self.isPhrase():
       # o_phrase   = 3        # Memory Ref [Base Reg + Index Reg]    phrase
       # [X19,X8]
@@ -1105,7 +1144,9 @@ class Operand:
         # isMatchImm = re.match("^#[0-9a-fA-FxX]+$", self.operand)
         # #-3.0
         # isMatchImm = re.match("^#\w+$", self.operand)
-        isMatchImm = re.match("^#[\w\-\.]+$", self.operand)
+        # isMatchImm = re.match("^#[\w\-\.]+$", self.operand)
+        # curOperand=#_OBJC_CLASS_$__TtC11XxxxXxxXxxx26ApiInitiateRechargeRequest@PAGEOFF
+        isMatchImm = re.match("^#[\w\-\.\$\@]+$", self.operand)
         logDebug("isMatchImm=%s" % isMatchImm)
         isValidOperand = bool(isMatchImm)
         logDebug("isValidOperand=%s" % isValidOperand)
@@ -1260,6 +1301,7 @@ class Operand:
 
 # class Instruction(object):
 class Instruction:
+  branchToStr = "BranchTo"
   # toStr = "to"
   toStr = "To"
   # addStr = "add"
@@ -1338,10 +1380,10 @@ class Instruction:
     """
     contentStr = ""
 
-    isDebug = False
+    # isDebug = False
     # isDebug = True
 
-    logDebug("self=%s", self)
+    logDebug("----- To contentStr: %s ----- ", self)
 
     operandNum = len(self.operands)
     logDebug("operandNum=%s", operandNum)
@@ -1349,15 +1391,24 @@ class Instruction:
     isPairInst = self.isStp() or self.isLdp()
     logDebug("isPairInst=%s", isPairInst)
     if not isPairInst:
+      if operandNum >= 1:
+        dstOperand = self.operands[0]
+        logDebug("dstOperand=%s", dstOperand)
+        dstOperandStr = dstOperand.contentStr
+        logDebug("dstOperandStr=%s", dstOperandStr)
+
       if operandNum >= 2:
         srcOperand = self.operands[1]
         logDebug("srcOperand=%s", srcOperand)
         srcOperandStr = srcOperand.contentStr
         logDebug("srcOperandStr=%s", srcOperandStr)
-        dstOperand = self.operands[0]
-        logDebug("dstOperand=%s", dstOperand)
-        dstOperandStr = dstOperand.contentStr
-        logDebug("dstOperandStr=%s", dstOperandStr)
+    
+    if self.isBl():
+      if operandNum == 1:
+        # <Instruction: 0xE3C8: BL _swift_getInitializedObjCClass>
+        dstOperandOperand = dstOperand.operand
+        logDebug("dstOperandOperand=%s", dstOperandOperand)
+        contentStr = "%s%s" % (Instruction.branchToStr, dstOperandOperand)
 
     if self.isMov() or self.isFmov():
       # MOV X0, X24
@@ -1378,6 +1429,7 @@ class Instruction:
       # # print("instOperandList=%s" % Operand.listToStr(instOperandList))
       if operandNum == 3:
         # <Instruction: 0x10235D574: ADD X0, X19, X8; location>
+        # <Instruction: 0xE3C4: ADD X0, X0, #_OBJC_CLASS_$__TtC11XxxxXxxXxxx26ApiInitiateRechargeRequest@PAGEOFF>
         extracOperand = self.operands[2]
         # print("extracOperand=%s" % extracOperand)
         extraOperandStr = extracOperand.contentStr
@@ -1436,6 +1488,20 @@ class Instruction:
         logDebug("srcOperandStr=%s", srcOperandStr)
         
         contentStr = "%s%s%s%s" % (srcOperandStr, Instruction.toStr, dstOperand1Str, dstOperand2Str)
+    elif self.isAdrp():
+      if operandNum == 2:
+        # <Instruction: 0xE3C0: ADRP X0, #unk_111D000; classType>
+        dstOperand1 = self.operands[0]
+        logDebug("dstOperand1=%s", dstOperand1)
+        dstOperand1Str = dstOperand1.contentStr
+        logDebug("dstOperand1Str=%s", dstOperand1Str)
+
+        srcOperand = self.operands[1]
+        logDebug("srcOperand=%s", srcOperand)
+        srcOperandStr = srcOperand.contentStr
+        logDebug("srcOperandStr=%s", srcOperandStr)
+
+        contentStr = "PageAddr%s%s%s" % (srcOperandStr, Instruction.toStr, dstOperand1Str)
 
     # TODO: add other Instruction support: SUB/STR/...
     logDebug("contentStr=%s", contentStr)
@@ -1456,9 +1522,12 @@ class Instruction:
   def isBr(self):
     return self.isInst("BR")
 
+  def isBl(self):
+    return self.isInst("BL")
+
   def isBranch(self):
     # TODO: support more: BRAA / ...
-    return self.isB() or self.isBr()
+    return self.isB() or self.isBr() or self.isBl()
 
   def isAdd(self):
     return self.isInst("ADD")
@@ -1480,6 +1549,9 @@ class Instruction:
 
   def isLdr(self):
     return self.isInst("LDR")
+
+  def isAdrp(self):
+    return self.isInst("ADRP")
 
 ################################################################################
 # Current Project Functions
@@ -1620,6 +1692,158 @@ def checkPrologue(instructionList):
 
   # print("isPrologue=%s" % isPrologue)
   return isPrologue
+
+def checkJumpToSwiftGetInitializedObjCClass(instructionList):
+  """
+  Check whether is jump to _swift_getInitializedObjCClass
+
+  Exmaple:
+
+    __text:000000000000E3B8 FD 7B BF A9                 STP             X29, X30, [SP,#-0x10+var_s0]!
+    __text:000000000000E3BC FD 03 00 91                 MOV             X29, SP
+    __text:000000000000E3C0 60 88 00 F0                 ADRP            X0, #unk_111D000 ; classType
+    __text:000000000000E3C4 00 20 2F 91                 ADD             X0, X0, #_OBJC_CLASS_$__TtC11XxxxXxxXxxx26ApiInitiateRechargeRequest@PAGEOFF
+    __text:000000000000E3C8 43 75 32 94                 BL              _swift_getInitializedObjCClass
+    __text:000000000000E3CC 01 00 80 D2                 MOV             X1, #0
+    __text:000000000000E3D0 FD 7B C1 A8                 LDP             X29, X30, [SP+var_s0],#0x10
+    __text:000000000000E3D4 C0 03 5F D6                 RET
+  """
+  logDebug("checkJumpToSwiftGetInitializedObjCClass: instructionList=%s", instructionList)
+
+  JumpToSwiftGetInitializedObjCClass_INSTRUCTION_SIZE = 8
+
+  isFuncInstMatch = True # is function instructions match
+  mangledClassName = None
+
+  if isFuncInstMatch:
+    instNum = len(instructionList)
+    logDebug("instNum=%s", instNum)
+    if JumpToSwiftGetInitializedObjCClass_INSTRUCTION_SIZE != instNum:
+      isFuncInstMatch = False
+
+  if isFuncInstMatch:
+    inst1 = instructionList[0]
+    logDebug("inst1=%s", inst1)
+    if not inst1.isStp():
+      isFuncInstMatch = False
+
+  if isFuncInstMatch:
+    inst2 = instructionList[1]
+    logDebug("inst2=%s", inst2)
+    if not inst2.isMov():
+      isFuncInstMatch = False
+
+  if isFuncInstMatch:
+    inst3 = instructionList[2]
+    logDebug("inst3=%s", inst3)
+    if not inst3.isAdrp():
+      isFuncInstMatch = False
+
+  if isFuncInstMatch:
+    inst4 = instructionList[3]
+    logDebug("inst4=%s", inst4)
+    if inst4.isAdd():
+      curOperands = inst4.operands
+      logDebug("curOperands=%s", curOperands)
+      operandNum = len(curOperands)
+      logDebug("operandNum=%s", operandNum)
+      if operandNum == 3:
+        operand1 = curOperands[0]
+        logDebug("operand1=%s", operand1)
+        operand1Name = operand1.operand
+        logDebug("operand1Name=%s", operand1Name)
+
+        operand2 = curOperands[1]
+        logDebug("operand2=%s", operand2)
+        operand2Name = operand2.operand
+        logDebug("operand2Name=%s", operand2Name)
+        if operand1Name == operand2Name:
+          operand3 = curOperands[2]
+          logDebug("operand3=%s", operand3)
+          operand3Operand = operand3.operand
+          logDebug("operand3Operand=%s", operand3Operand)
+
+          # operand3Operand=#_OBJC_CLASS_$__TtC11XxxxXxxXxxx26ApiInitiateRechargeRequest@PAGEOFF
+          objcClassMatch = re.search("#_OBJC_CLASS_\$_(?P<mangledClassName>\w+)@PAGEOFF", operand3Operand)
+          logDebug("objcClassMatch=%s", objcClassMatch)
+          if objcClassMatch:
+            mangledClassName = objcClassMatch.group("mangledClassName")
+            logDebug("mangledClassName=%s", mangledClassName)
+          else:
+            isFuncInstMatch = False
+        else:
+          isFuncInstMatch = False
+      else:
+        isFuncInstMatch = False
+    else:
+      isFuncInstMatch = False
+
+  if isFuncInstMatch:
+    inst5 = instructionList[4]
+    logDebug("inst5=%s", inst5)
+    if inst5.isBl():
+      # _postInit: self.operand=_swift_getInitializedObjCClass
+      curOperands = inst5.operands
+      logDebug("curOperands=%s", curOperands)
+      operandNum = len(curOperands)
+      logDebug("operandNum=%s", operandNum)
+      if operandNum == 1:
+        operand1 = curOperands[0]
+        logDebug("operand1=%s", operand1)
+        operand1Operand = operand1.operand
+        logDebug("operand1Operand=%s", operand1Operand)
+        # support:
+        #   swift_getInitializedObjCClass
+        #   _swift_getInitializedObjCClass
+        getObjcClassMatch = re.search("swift_getInitializedObjCClass", operand1Operand)
+        logDebug("getObjcClassMatch=%s", getObjcClassMatch)
+        if getObjcClassMatch:
+          isFuncInstMatch = True
+        else:
+          isFuncInstMatch = False
+      else:
+        isFuncInstMatch = False
+    else:
+      isFuncInstMatch = False
+
+  if isFuncInstMatch:
+    inst6 = instructionList[5]
+    logDebug("inst6=%s", inst6)
+    if not inst6.isMov():
+      isFuncInstMatch = False
+
+  if isFuncInstMatch:
+    inst7 = instructionList[6]
+    logDebug("inst7=%s", inst7)
+    if not inst7.isLdp():
+      isFuncInstMatch = False
+
+  if isFuncInstMatch:
+    inst8 = instructionList[7]
+    logDebug("inst8=%s", inst8)
+    if not inst8.isRet():
+      isFuncInstMatch = False
+
+  logDebug("isFuncInstMatch=%s, mangledClassName=%s", isFuncInstMatch, mangledClassName)
+  return isFuncInstMatch,  mangledClassName
+
+def removeWrongLuminaFunctionComment_AppDelegate(funcAddr):
+  """
+  remove wrong function comments from Lumina
+
+  Example:
+    $s11CryptoTrade11AppDelegateCMa 
+    type metadata accessor for AppDelegate
+  """
+  origFuncComment = ida_getFunctionComment(funcAddr, repeatable=True)
+  logDebug("origFuncComment=%s", origFuncComment)
+  isAppDelegateCommentExisted = "type metadata accessor for AppDelegate" in origFuncComment
+  logDebug("isAppDelegateCommentExisted=%s", isAppDelegateCommentExisted)
+  if isAppDelegateCommentExisted:
+    newComment = ""
+    setCmtRet = ida_setFunctionComment(funcAddr, newComment, repeatable=True)
+    logDebug("setCmtRet=%s", setCmtRet)
+    logInfo("[0x%X] Clear wrong Lumina's AppDelegate function comment: %s", funcAddr, origFuncComment)
 
 def generateFirstParaName(selectorFirstPart):
   """
@@ -1849,6 +2073,12 @@ def isNeedProcessFunc(curFuncAddr):
       isNeedProcess = True
 
     if not isNeedProcess:
+      isTypeMetadataAccessorForAppDelegate = isFuncName_TypeMetadataAccessorForAppDelegate(funcName)
+      logDebug("isTypeMetadataAccessorForAppDelegate=%s", isTypeMetadataAccessorForAppDelegate)
+      if isTypeMetadataAccessorForAppDelegate:
+        isNeedProcess = True
+
+    if not isNeedProcess:
       isObjcMsgSend, selectorStr = isObjcMsgSendFunction(curFuncAddr)
       logDebug("isObjcMsgSend=%s, selectorStr=%s", isObjcMsgSend, selectorStr)
       if isObjcMsgSend:
@@ -1881,13 +2111,14 @@ curDateTimeStr = getCurDatetimeStr()
 
 curBinFilename = ida_nalt.get_root_filename()
 
-idaLogFilename = "%s_idaRename_%s.log" % (curBinFilename, curDateTimeStr)
-loggingInit(idaLogFilename, fileLogLevel=logLevel, consoleLogLevel=logLevel)
+if logUseLogging:
+  idaLogFilename = "%s_idaRename_%s.log" % (curBinFilename, curDateTimeStr)
+  loggingInit(idaLogFilename, fileLogLevel=logLevel, consoleLogLevel=logLevel)
+  logInfo("idaLogFilename=%s", idaLogFilename)
 
 logInfo("IDA Version: %s", idaVersion)
 logDebug("curDateTimeStr=%s", curDateTimeStr)
 logInfo("curBinFilename=%s", curBinFilename)
-logInfo("idaLogFilename=%s", idaLogFilename)
 
 if isExportResult:
   if not outputFolder:
@@ -1898,6 +2129,9 @@ if isExportResult:
 # toProcessFuncAddrList = [0x1013916A0] # WhatsApp
 # toProcessFuncAddrList = [0xFEB120, 0xFEB140] # SharedModules
 # toProcessFuncAddrList = [0xF35794] # SharedModules
+# toProcessFuncAddrList = [0xE3B8] # binFile1
+# # toProcessFuncAddrList = [0xE3B8, 0x137D4, 0x1D22C] # binFile1
+# toProcessFuncAddrList = [0x10001A91C] # binFile2
 # allFuncAddrList = toProcessFuncAddrList
 
 # normal code
@@ -1994,6 +2228,27 @@ def doFunctionRename(funcAddr):
     retryFuncName = None
 
   if not newFuncName:
+    isFuncInstMatch, mangledObjcClassName = checkJumpToSwiftGetInitializedObjCClass(disAsmInstList)
+    logDebug("isFuncInstMatch=%s, mangledObjcClassName=%s", isFuncInstMatch, mangledObjcClassName)
+    if isFuncInstMatch:
+      shortClassName = mangledObjcClassName
+      demangledObjcClassName = ida_getDemangledName(mangledObjcClassName)
+      logDebug("demangledObjcClassName=%s", demangledObjcClassName)
+      demangedClassNameMatch = re.search("((?P<binFilename>\w+)\.)?(?P<shortClassName>\w+)", demangledObjcClassName)
+      logDebug("demangedClassNameMatch=%s", demangedClassNameMatch)
+      if demangedClassNameMatch:
+        shortClassName = demangedClassNameMatch.group("shortClassName")
+      logDebug("shortClassName=%s", shortClassName)
+
+      funcNameMainPart = None
+      curPrefix = "getObjCClass"
+      newFuncName = "%s_%s" % (curPrefix, shortClassName)
+      logDebug("newFuncName=%s", newFuncName)
+      retryFuncName = None
+
+      removeWrongLuminaFunctionComment_AppDelegate(funcAddr)
+
+  if not newFuncName:
     lastInst = disAsmInstList[-1]
     logDebug("lastInst=%s" % lastInst)
     lastIsRet = lastInst.isRet()
@@ -2051,11 +2306,16 @@ def doFunctionRename(funcAddr):
     newFuncName = "%s_%s" % (funcNameMainPart, last4AddrStr)
     retryFuncName = "%s_%s" % (funcNameMainPart, allAddrStr)
 
-  # # for debug
-  # print("Test to rename: [0x%X] newFuncName=%s, retryFuncName=%s" % (funcAddr, newFuncName, retryFuncName))
 
   if newFuncName:
+
     isRenameOk, renamedName = ida_rename(funcAddr, newFuncName, retryFuncName)
+
+    # # for debug
+    # print("Test to rename: [0x%X] newFuncName=%s, retryFuncName=%s" % (funcAddr, newFuncName, retryFuncName))
+    # isRenameOk = True
+    # renamedName = newFuncName
+
     logDebug("isRenameOk=%s, renamedName=%s", isRenameOk, renamedName)
 
     renamedResultDict["address"] = funcAddrStr
