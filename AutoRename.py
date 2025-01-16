@@ -25,18 +25,6 @@ import ida_bytes
 import ida_funcs
 
 ################################################################################
-# Document
-################################################################################
-
-# IDA Python API:
-#   https://www.hex-rays.com/products/ida/support/idapython_docs/index.html
-#
-#   idc
-#     https://hex-rays.com//products/ida/support/idapython_docs/idc.html
-#   ida_name
-#     https://hex-rays.com/products/ida/support/idapython_docs/ida_name.html
-
-################################################################################
 # Config & Settings & Const
 ################################################################################
 
