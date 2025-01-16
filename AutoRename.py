@@ -1,6 +1,6 @@
 # Function: IDA script plugin, auto rename for all (Functions, Names) symbols
 # Author: Crifan Li
-# Update: 20250115
+# Update: 20250116
 
 import re
 import os
@@ -1051,36 +1051,64 @@ class IDAUtil:
     isTypeMetadataAccessorForAppDelegate = IDAUtil.isFuncName_TypeMetadataAccessorForAppDelegate(curFuncName)
     return isTypeMetadataAccessorForAppDelegate
 
-  def isPrologueEpilogueReg(regName):
+  def isReg_PrologueEpilogue(regName):
     """
     Check is Prologue/Epilogue register
     eg:
       "X28" -> True
       "D8" -> True
     """
-    # print("regName=%s" % regName)
+    CommonUtil.logDebug("regName=%s", regName)
     regNameUpper = regName.upper()
-    # print("regNameUpper=%s" % regNameUpper)
+    CommonUtil.logDebug("regNameUpper=%s", regNameUpper)
     isPrlgEplg = regNameUpper in ARMUtil.PrologueEpilogueRegList
-    # print("isPrlgEplg=%s" % isPrlgEplg)
+    CommonUtil.logDebug("isPrlgEplg=%s", isPrlgEplg)
     return isPrlgEplg
 
-  def isPrologueEpilogueOperand(curOperand):
+  def isOperand_PrologueEpilogue(curOperand):
     """
-    Check is Prologue/Epilogue Operand
+    Check Operand is Prologue/Epilogue or not
     eg:
       <Operand: op=X28,type=1,val=0x9D> -> True
     """
     isPrlgEplgOp = False
     opIsReg = curOperand.isReg()
-    # print("opIsReg=%s" % opIsReg)
+    CommonUtil.logDebug("opIsReg=%s", opIsReg)
     if opIsReg:
       regName = curOperand.operand
-      # print("regName=%s" % regName)
-      isPrlgEplgOp = IDAUtil.isPrologueEpilogueReg(regName)
+      CommonUtil.logDebug("regName=%s", regName)
+      isPrlgEplgOp = IDAUtil.isReg_PrologueEpilogue(regName)
 
-    # print("isPrlgEplgOp=%s" % isPrlgEplgOp)
+    CommonUtil.logDebug("isPrlgEplgOp=%s", isPrlgEplgOp)
     return isPrlgEplgOp
+
+  def isOperands_PrologueEpilogue(instOperands):
+    """
+    Check a instruction's all operands is Prologue/Epilogue or not
+    eg:
+      STP X28, X27, xxx -> True
+      LDP X20, X19, xxx -> True
+    """
+    isAllPrlgEplg = False
+
+    operandNum = len(instOperands)
+    CommonUtil.logDebug("operandNum=%s", operandNum)
+    if operandNum == 3:
+      operand1 = instOperands[0]
+      operand2 = instOperands[1]
+      CommonUtil.logDebug("operand1=%s, operand2=%s", operand1, operand2)
+
+      # # for debug
+      # operand3 = curOperands[2]
+      # print("operand3=%s" % operand3)
+
+      op1IsPrlgEplg = IDAUtil.isOperand_PrologueEpilogue(operand1)
+      op2IsPrlgEplg = IDAUtil.isOperand_PrologueEpilogue(operand2)
+      CommonUtil.logDebug("op1IsPrlgEplg=%s, op2IsPrlgEplg=%s", op1IsPrlgEplg, op2IsPrlgEplg)
+      isAllPrlgEplg = op1IsPrlgEplg and op2IsPrlgEplg
+    
+    CommonUtil.logDebug("instOperands=%s -> isAllPrlgEplg=%s", instOperands, isAllPrlgEplg)
+    return isAllPrlgEplg
 
   def isAllPrologueStp(instructionList):
     """
@@ -1090,35 +1118,89 @@ class IDAUtil:
     """
     isAllPrlgStp = True
     for eachInst in instructionList:
-      # print("eachInst=%s" % eachInst)
+      CommonUtil.logDebug("eachInst=%s", eachInst)
       isStp = eachInst.isStp()
       if isStp:
         # check operand register match or not
         curOperands = eachInst.operands
-        # print("curOperands=%s" % curOperands)
-        operandNum = len(curOperands)
-        # print("operandNum=%s" % operandNum)
-        if operandNum == 3:
-          operand1 = curOperands[0]
-          operand2 = curOperands[1]
-          # print("operand1=%s, operand2=%s" % (operand1, operand2))
-    
-          # # for debug
-          # operand3 = curOperands[2]
-          # print("operand3=%s" % operand3)
-    
-          op1IsPrlgEplg = IDAUtil.isPrologueEpilogueOperand(operand1)
-          op2IsPrlgEplg = IDAUtil.isPrologueEpilogueOperand(operand2)
-          # print("op1IsPrlgEplg=%s, op2IsPrlgEplg=%s" % (op1IsPrlgEplg, op2IsPrlgEplg))
-          isAllPrlgStp = op1IsPrlgEplg and op2IsPrlgEplg
+        CommonUtil.logDebug("curOperands=%s", curOperands)
+        isOperandsPrlgStp = IDAUtil.isOperands_PrologueEpilogue(curOperands)
+        CommonUtil.logDebug("isOperandsPrlgStp=%s", isOperandsPrlgStp)
+        if isOperandsPrlgStp:
+          isAllPrlgStp = isOperandsPrlgStp
         else:
-          isAllPrlgStp = False  
+          isAllPrlgStp = False
+          break
       else:
         isAllPrlgStp = False
         break
 
-    # print("isAllPrlgStp=%s" % isAllPrlgStp)
+    CommonUtil.logDebug("isAllPrlgStp=%s", isAllPrlgStp)
     return isAllPrlgStp
+
+  def isInstruction_Prologue(curInstruction):
+    """
+    Check whether instruction is prologue(STP)
+    eg:
+      STP X29, X30, [SP,#0x10+var_s0] -> True
+      STP X28, X27, [SP,#arg_70] -> True
+      STP X20, X19, [SP,#-0x10+var_10]! -> True
+    """
+    isInstPrlg = False
+    isStp = curInstruction.isStp()
+    if isStp:
+      isOperandsPrlgStp = IDAUtil.isOperands_PrologueEpilogue(curInstruction.operands)
+      isInstPrlg = isStp and isOperandsPrlgStp
+    CommonUtil.logDebug("curInstruction=%s -> isInstPrlg=%s", curInstruction, isInstPrlg)
+    return isInstPrlg
+
+  def isInstruction_Epilogue(curInstruction):
+    """
+    Check whether instruction is epilogue(LDP)
+    eg:
+      LDP X20, X19, [SP+0x10+var_10],#0x20 -> True
+    """
+    isInstEplg = False
+    isLdp = curInstruction.isLdp()
+    if isLdp:
+      isOperandsPrlgStp = IDAUtil.isOperands_PrologueEpilogue(curInstruction.operands)
+      isInstEplg = isLdp and isOperandsPrlgStp
+    CommonUtil.logDebug("curInstruction=%s -> isInstEplg=%s", curInstruction, isInstEplg)
+    return isInstEplg
+
+  def removePrologueEpilogueInstructions(instructionList):
+    """
+    remove prologue and epilogue instructions
+    """
+    CommonUtil.logDebug("input: instructionList=%s", Instruction.listToStr(instructionList))
+    isContinueCheck = True
+    while isContinueCheck and instructionList:
+      isPrlgEplg = False
+
+      firstInst = instructionList[0]
+      CommonUtil.logDebug("firstInst=%s", firstInst)
+      firstIsPrlg = IDAUtil.isInstruction_Prologue(firstInst)
+      CommonUtil.logDebug("firstIsPrlg=%s", firstIsPrlg)
+      if firstIsPrlg:
+        isPrlgEplg = True
+        instructionList.pop(0)
+      
+      if instructionList:
+        lastInst = instructionList[-1]
+        CommonUtil.logDebug("lastInst=%s", lastInst)
+        lastIsEplg = IDAUtil.isInstruction_Epilogue(lastInst)
+        CommonUtil.logDebug("lastIsEplg=%s", lastIsEplg)
+        if lastIsEplg:
+          isPrlgEplg = True
+          instructionList.pop(-1)
+
+      CommonUtil.logDebug("current loop end: instructionList=%s", Instruction.listToStr(instructionList))
+
+      if not isPrlgEplg:
+        isContinueCheck = False
+
+    CommonUtil.logDebug("output: instructionList=%s", Instruction.listToStr(instructionList))
+    return instructionList
 
   def isRenamedFunctionName(funcName):
     """
@@ -1155,7 +1237,6 @@ class IDAUtil:
     funcNameNoAddrSuffix = re.sub("_[A-Z0-9]{4,20}$", "", funcName)
     # print("funcName=%s -> funcNameNoAddrSuffix=%s" % (funcName, funcNameNoAddrSuffix))
     return funcNameNoAddrSuffix
-
 
 # Update: 20250115
 class OperandType:
@@ -1723,9 +1804,12 @@ class Instruction:
   def isBl(self):
     return self.isInst("BL")
 
+  def isBlr(self):
+    return self.isInst("BLR")
+
   def isBranch(self):
     # TODO: support more: BRAA / ...
-    return self.isB() or self.isBr() or self.isBl()
+    return self.isB() or self.isBr() or self.isBl() or self.isBlr()
 
   def isAdd(self):
     return self.isInst("ADD")
@@ -2240,6 +2324,10 @@ if isExportResult:
 # # toProcessFuncAddrList = [0xE3B8, 0x137D4, 0x1D22C] # binFile1
 # toProcessFuncAddrList = [0x10001A91C] # binFile2
 # toProcessFuncAddrList = [0xB786C] # binFile1
+# toProcessFuncAddrList = [0x2DCE10] # binFile1
+# toProcessFuncAddrList = [0xB786C] # binFile1
+# toProcessFuncAddrList = [0xB118] # binFile1
+# toProcessFuncAddrList = [0xAF48, 0xB118, 0xE39C, 0xCF4B4, 0x5EF6A0] # binFile1
 # allFuncAddrList = toProcessFuncAddrList
 
 # normal code
@@ -2335,6 +2423,7 @@ def doFunctionRename(funcAddr):
     newFuncName = "%s_%s" % (funcNameMainPart, allAddrStr)
     retryFuncName = None
 
+  # process: remove residual no-useful STP/LDP part from old renamed function name
   if not newFuncName:
     isFuncName_stp_or_ldp = IDAUtil.isFuncName_STP_LDP(funcName)
     CommonUtil.logDebug("isFuncName_stp_or_ldp=%s", isFuncName_stp_or_ldp)
@@ -2349,6 +2438,7 @@ def doFunctionRename(funcAddr):
       CommonUtil.logDebug("newFuncName=%s", newFuncName)
       retryFuncName = None
 
+  # Process: jump to _swift_getInitializedObjCClass, but is Lumina wrong function name: "type metadata accessor for AppDelegate_N"
   if not newFuncName:
     isFuncInstMatch, mangledObjcClassName = checkJumpToSwiftGetInitializedObjCClass(disAsmInstList)
     CommonUtil.logDebug("isFuncInstMatch=%s, mangledObjcClassName=%s", isFuncInstMatch, mangledObjcClassName)
@@ -2370,6 +2460,7 @@ def doFunctionRename(funcAddr):
 
       removeWrongLuminaFunctionComment_AppDelegate(funcAddr)
 
+  # Process: Common
   if not newFuncName:
     lastInst = disAsmInstList[-1]
     CommonUtil.logDebug("lastInst=%s" % lastInst)
@@ -2393,8 +2484,12 @@ def doFunctionRename(funcAddr):
     instListExceptLast = disAsmInstList[0:-1]
     CommonUtil.logDebug("instListExceptLast=%s", Instruction.listToStr(instListExceptLast))
 
-    if instListExceptLast:
-      isAllInstSupport, retValue = checkAndGenerateInstListContentStr(instListExceptLast)
+    # Process: remove prologue and epilogue instructions
+    instListExceptLast_noPrlgEplg = IDAUtil.removePrologueEpilogueInstructions(instListExceptLast)
+    CommonUtil.logDebug("instListExceptLast_noPrlgEplg=%s", Instruction.listToStr(instListExceptLast_noPrlgEplg))
+
+    if instListExceptLast_noPrlgEplg:
+      isAllInstSupport, retValue = checkAndGenerateInstListContentStr(instListExceptLast_noPrlgEplg)
       CommonUtil.logDebug("isAllInstSupport=%s, retValue=%s", isAllInstSupport, retValue)
 
       if isAllInstSupport:
