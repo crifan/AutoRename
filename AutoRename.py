@@ -73,8 +73,13 @@ MAX_INSTRUCTION_SIZE = MAX_INSTRUCTION_NUM * SINGLE_INSTRUCTION_SIZE
 # Util Function
 ################################################################################
 
-# Update: 20250115
+# Update: 20250116
+# Link: https://github.com/crifan/crifanLibPythonIDA/blob/main/CommonUtil.py
 class CommonUtil:
+  """
+    some common Python Util functions, used in IDA Python Plugin
+    mainly copy from https://github.com/crifan/crifanLibPython/tree/master/python3/crifanLib
+  """
 
   CURRENT_LIB_FILENAME = "crifanLogging"
 
@@ -272,6 +277,7 @@ class CommonUtil:
     os.makedirs(folderFullPath, exist_ok=True)
 
 # Update: 20250115
+# Link: https://github.com/crifan/crifanLibPythonIDA/blob/main/ARMUtil.py
 class ARMUtil:
   ArmSpecialRegNameList = [
     "SB",
@@ -306,6 +312,7 @@ class ARMUtil:
   ]
 
 # Update: 20250115
+# Link: https://github.com/crifan/crifanLibPythonIDA/blob/main/IDAUtil.py
 class IDAUtil:
   # IDA Python API:
   #   https://www.hex-rays.com/products/ida/support/idapython_docs/index.html
@@ -1239,6 +1246,7 @@ class IDAUtil:
     return funcNameNoAddrSuffix
 
 # Update: 20250115
+# Link: https://github.com/crifan/crifanLibPythonIDA/blob/main/OperandType.py
 class OperandType:
   # Operand Type
   # old doc: 
@@ -1287,6 +1295,7 @@ class OperandType:
   o_dcr  =         o_idpspec5      # Device control register
 
 # Update: 20250115
+# Link: https://github.com/crifan/crifanLibPythonIDA/blob/main/Operand.py
 class Operand:
   # addStr = "add"
   # addStr = "Add"
@@ -1579,6 +1588,7 @@ class Operand:
     return curRegIdx
 
 # Update: 20250115
+# Link: https://github.com/crifan/crifanLibPythonIDA/blob/main/Instruction.py
 class Instruction:
   branchToStr = "BranchTo"
   # toStr = "to"
